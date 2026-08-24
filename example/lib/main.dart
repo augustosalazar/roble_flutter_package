@@ -1,5 +1,9 @@
+import 'dart:async';
+
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:roble/roble.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() {
   runApp(const RobleExampleApp());
@@ -12,13 +16,27 @@ class RobleExampleApp extends StatefulWidget {
   State<RobleExampleApp> createState() => _RobleExampleAppState();
 }
 
-/// 👇 Cámbialo por el identificador de tu proyecto en la consola de Roble.
-const kContractId = 'tu_contrato';
-const kBaseUrl = 'https://roble-api.test-openlab.uninorte.edu.co';
+/// 👇 Cámbialo por el identificador de tu proyecto en la consola de Roble,
+/// o pásalo al vuelo sin tocar el fuente:
+///
+///     flutter run -d chrome --web-port 8080 ///       --dart-define=ROBLE_CONTRACT_ID=miproyecto_ab12cd34ef
+const kContractId = String.fromEnvironment(
+  'ROBLE_CONTRACT_ID',
+  defaultValue: 'tu_contrato',
+);
+/// Destino de retorno del login social, tal como lo diste de alta en la
+/// consola. Vacío usa el llamado `default`.
+const kSsoRedirect = String.fromEnvironment('ROBLE_SSO_REDIRECT');
+const kBaseUrl = String.fromEnvironment(
+  'ROBLE_BASE_URL',
+  defaultValue: 'https://roble-api.test-openlab.uninorte.edu.co',
+);
 
 class _RobleExampleAppState extends State<RobleExampleApp> {
   RobleApiDataBase? _db;
   String? _errorConfig;
+
+  StreamSubscription<Uri>? _deepLinks;
 
   String? _lastEmail;
   String _log = '';
@@ -45,7 +63,44 @@ class _RobleExampleAppState extends State<RobleExampleApp> {
       return;
     }
 
-    _restaurarSesion();
+    _arrancar();
+  }
+
+  /// Roble devuelve al usuario a la app tras el proveedor, y cómo llega el
+  /// retorno depende de la plataforma:
+  ///
+  /// - **web**: la app se recarga en la URL de retorno, con `?code=` en
+  ///   `Uri.base`.
+  /// - **móvil y escritorio**: la app ya está viva y se la *reanuda* con un
+  ///   deep link, así que `Uri.base` no sirve y hay que escuchar el stream.
+  Future<void> _arrancar() async {
+    _escucharDeepLinks();
+
+    if (Uri.base.queryParameters.containsKey('code')) {
+      await _terminarLoginSocial(Uri.base);
+      return;
+    }
+    await _restaurarSesion();
+  }
+
+  /// Deep links de vuelta del proveedor (no-op en web).
+  void _escucharDeepLinks() {
+    final links = AppLinks();
+
+    _deepLinks = links.uriLinkStream.listen(
+      (uri) {
+        if (uri.queryParameters.containsKey('code')) {
+          _terminarLoginSocial(uri);
+        }
+      },
+      onError: (Object e) => _appendLog('Deep link inválido: $e'),
+    );
+  }
+
+  @override
+  void dispose() {
+    _deepLinks?.cancel();
+    super.dispose();
   }
 
   /// Al arrancar: si hay sesión guardada y sigue siendo válida, se reutiliza.
@@ -183,6 +238,75 @@ class _RobleExampleAppState extends State<RobleExampleApp> {
     }
   }
 
+  // === LOGIN SOCIAL ===
+
+  /// Consulta qué proveedores están activos en el proyecto. No necesita
+  /// sesión, así que se puede llamar antes de pintar los botones.
+  Future<void> _estadoProveedores() async {
+    for (final proveedor in RobleSocialProvider.values) {
+      try {
+        final cfg = await db.socialConfig(proveedor);
+        _appendLog(cfg.enabled
+            ? '${proveedor.name}: activo (clientId ${cfg.clientId})'
+            : '${proveedor.name}: apagado en este proyecto');
+      } on RobleApiException catch (e) {
+        _appendLog('${proveedor.name}: ${e.message}');
+      }
+    }
+  }
+
+  /// Paso 1: navegar a la URL del proveedor. El paquete solo la construye.
+  Future<void> _entrarCon(RobleSocialProvider proveedor) async {
+    try {
+      final cfg = await db.socialConfig(proveedor);
+      if (!cfg.enabled) {
+        _appendLog('${proveedor.name} no está activo: actívalo en la consola '
+            'de Roble antes de probar.');
+        return;
+      }
+
+      // 'redirect' elige el destino de retorno configurado en la consola.
+      // Sin destinos dados de alta, Roble responde 400 y no arranca.
+      final url = db.socialLoginUrl(
+        proveedor,
+        extra: {'origen': 'ejemplo-flutter'},
+        redirect: kSsoRedirect.isEmpty ? null : kSsoRedirect,
+      );
+      _appendLog('Abriendo ${url.origin}…');
+
+      // En web se navega en la misma pestaña; en móvil hay que salir al
+      // navegador del sistema para que la sesión del proveedor se comparta.
+      if (!await launchUrl(
+        url,
+        webOnlyWindowName: '_self',
+        mode: LaunchMode.externalApplication,
+      )) {
+        _appendLog('No se pudo abrir el navegador.');
+      }
+    } on RobleApiException catch (e) {
+      _appendLog('Error: ${e.message}');
+    }
+  }
+
+  /// Paso 3: canjear el código con el que Roble nos devolvió aquí.
+  Future<void> _terminarLoginSocial(Uri retorno) async {
+    _appendLog('Volviendo de ${retorno.queryParameters['provider']}…');
+    try {
+      final user = await db.completeSocialLogin(
+        retorno,
+        persistSession: _recordarme,
+      );
+      _lastEmail = user['email'] as String?;
+      _appendLog('Dentro como ${user['name']} (${user['email']})');
+    } on RobleApiHttpException catch (e) {
+      // Lo habitual al recargar la página de retorno: el código es de un
+      // solo uso y dura 60 segundos.
+      _appendLog('No se pudo completar (${e.statusCode}): ${e.message}');
+    } on RobleApiException catch (e) {
+      _appendLog('No se pudo completar: ${e.message}');
+    }
+  }
+
   // === UI ===
 
   @override
@@ -226,6 +350,18 @@ class _RobleExampleAppState extends State<RobleExampleApp> {
                   ElevatedButton(
                     onPressed: _logout,
                     child: const Text('Cerrar sesión'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => _entrarCon(RobleSocialProvider.google),
+                    child: const Text('Entrar con Google'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () => _entrarCon(RobleSocialProvider.microsoft),
+                    child: const Text('Entrar con Microsoft'),
+                  ),
+                  ElevatedButton(
+                    onPressed: _estadoProveedores,
+                    child: const Text('¿Qué proveedores hay?'),
                   ),
                   ElevatedButton(
                     onPressed: _probarCrud,

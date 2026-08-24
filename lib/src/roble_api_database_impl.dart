@@ -7,6 +7,8 @@ import 'package:http/http.dart' as http;
 import 'roble_api_config.dart';
 import 'roble_api_exception.dart';
 import 'roble_models.dart';
+import 'roble_social_auth.dart';
+import 'roble_social_window.dart';
 import 'roble_storage.dart';
 
 /// Cliente HTTP robusto para interactuar con la API Roble.
@@ -33,17 +35,58 @@ class RobleApiDataBase {
   late final String _storageKey =
       'roble.session.${config.authUrl.split('/').last}';
 
+  /// Destino de retorno del login social al que vuelve **esta** app, por su
+  /// nombre en la consola de Roble. `null` usa el llamado `default`.
+  ///
+  /// Es una constante de la app, no de cada llamada: la versión web siempre
+  /// vuelve al destino web y la de móvil al de móvil. Se fija una vez aquí y
+  /// [socialLoginUrl] lo usa solo.
+  final String? ssoRedirect;
+
+  /// Cómo se abre el proveedor en el login social. `null` usa la ventana
+  /// emergente de web, que fuera de web lanza pidiendo que pongas la tuya.
+  ///
+  /// Se fija una vez aquí, como [ssoRedirect], porque es una constante de la
+  /// app: cada plataforma abre el proveedor siempre igual.
+  final RobleSocialOpener? socialOpener;
+
   /// Crea el cliente.
   ///
   /// La sesión se persiste sola en el almacén seguro del sistema; no hace
   /// falta configurar nada. [storage] y [client] existen para poder
   /// sustituirlos en pruebas.
+  ///
+  /// [ssoRedirect] solo hace falta si usas login social y el destino de
+  /// retorno de esta app no es el `default`. [socialOpener] solo hace falta
+  /// para usar [signInWithProvider] fuera de web.
   RobleApiDataBase({
     required this.config,
     http.Client? client,
     RobleTokenStorage? storage,
+    String? ssoRedirect,
+    this.socialOpener,
   })  : _client = client ?? http.Client(),
-        storage = storage ?? RobleSecureStorage();
+        storage = storage ?? RobleSecureStorage(),
+        ssoRedirect = _validarRedirect(ssoRedirect, 'ssoRedirect');
+
+  /// Recorta el nombre del destino y rechaza los vacíos.
+  ///
+  /// Un `redirect` en blanco no es "sin destino": el servidor lo trata como un
+  /// destino desconocido y responde `400`, un mensaje que despista.
+  static String? _validarRedirect(String? valor, String nombre) {
+    if (valor == null) return null;
+
+    final limpio = valor.trim();
+    if (limpio.isEmpty) {
+      throw ArgumentError.value(
+        valor,
+        nombre,
+        'No puede estar vacío. Es el nombre de un destino de retorno '
+            'configurado en la consola de Roble; omítelo para usar "default"',
+      );
+    }
+    return limpio;
+  }
 
   // ============================================================
   // ============= SESIÓN =======================================
@@ -544,6 +587,296 @@ class RobleApiDataBase {
     _clearTokens();
   }
 
+  // ============================================================
+  // ============= INICIO DE SESIÓN SOCIAL ======================
+  // ============================================================
+
+  /// Claves que Roble rechaza dentro de `extra`, a cualquier nivel de
+  /// anidamiento: unas por seguridad del propio usuario (`role`, `isAdmin`),
+  /// otras porque contaminarían el prototipo al deserializar en JavaScript.
+  static const Set<String> _extraForbiddenKeys = {
+    '__proto__',
+    '_proto_',
+    'constructor',
+    'prototype',
+    'role',
+    'roleId',
+    'permissions',
+    'isAdmin',
+    'isVerified',
+    'isSSO',
+    'userId',
+    'user_id',
+  };
+
+  /// Límite del servidor para `extra` ya serializado.
+  static const int _extraMaxBytes = 4096;
+
+  /// `{host}/auth`, sin el contrato: los endpoints de intercambio cuelgan de
+  /// ahí, porque Roble deduce el proyecto del `state` de OAuth.
+  String get _authBaseUrl =>
+      config.authUrl.substring(0, config.authUrl.lastIndexOf('/'));
+
+  /// Consulta si un proveedor está disponible en este proyecto.
+  ///
+  /// El endpoint es público: no hace falta sesión. Úsalo para ocultar o
+  /// deshabilitar el botón antes de que el usuario lo pulse, porque arrancar
+  /// el flujo con un proveedor apagado responde `403`.
+  ///
+  /// ```dart
+  /// final google = await db.socialConfig(RobleSocialProvider.google);
+  /// if (google.enabled) mostrarBotonGoogle();
+  /// ```
+  Future<RobleSocialConfig> socialConfig(RobleSocialProvider provider) async {
+    final res = await _makeRequest(
+      'GET',
+      '${provider.name}-config',
+      isAuthRequest: true,
+      skipAuth: true,
+    );
+
+    if (res is Map) return RobleSocialConfig.fromJson(res);
+    throw const RobleApiFormatException(
+        'Respuesta inesperada al consultar la configuración del proveedor.');
+  }
+
+  /// URL con la que arranca el inicio de sesión de [provider].
+  ///
+  /// **No es una petición HTTP**: hay que *navegar* a ella. En web, cambiando
+  /// la ubicación del documento; en móvil y escritorio, abriéndola en el
+  /// navegador del sistema. El paquete no la abre por ti para no imponerte
+  /// una dependencia de `url_launcher`.
+  ///
+  /// ```dart
+  /// final url = db.socialLoginUrl(RobleSocialProvider.google);
+  /// await launchUrl(url, mode: LaunchMode.externalApplication);
+  /// ```
+  ///
+  /// [redirect] elige a cuál de los **destinos de retorno** configurados en la
+  /// consola debe volver el usuario, por su nombre. Normalmente no se pasa: se
+  /// fija una vez con `ssoRedirect` al crear el cliente, y esto es solo para
+  /// desviar una llamada concreta. Si no hay ninguno de los dos, Roble usa el
+  /// destino llamado `default`.
+  ///
+  /// Un proyecto sin destinos configurados no puede arrancar el flujo:
+  /// responde `400`.
+  ///
+  /// [extra] son campos adicionales que se guardan en el perfil del usuario
+  /// (los existentes se conservan; los que coincidan se sobrescriben). Viaja
+  /// **en la URL**, así que no pongas nada secreto ahí.
+  ///
+  /// Lanza [ArgumentError] si [redirect] está vacío, si [extra] pasa de 4 KB
+  /// serializado, si no es convertible a JSON, o si usa alguna clave reservada
+  /// por Roble —`role`, `isAdmin`, `userId`, `permissions`…— a cualquier nivel
+  /// de anidamiento.
+  Uri socialLoginUrl(
+    RobleSocialProvider provider, {
+    Map<String, dynamic>? extra,
+    String? redirect,
+  }) {
+    final uri = Uri.parse('${config.authUrl}/${provider.name}');
+    final query = <String, String>{};
+
+    // El de la llamada manda; si no, el de la app.
+    final destino = _validarRedirect(redirect, 'redirect') ?? ssoRedirect;
+    if (destino != null) query['redirect'] = destino;
+
+    if (extra != null && extra.isNotEmpty) {
+      query['extra'] = _encodeSocialExtra(extra);
+    }
+
+    return query.isEmpty ? uri : uri.replace(queryParameters: query);
+  }
+
+  /// Inicia sesión con [provider] en una ventana, sin descargar la app.
+  ///
+  /// Es el camino corto: abre el proveedor, espera el retorno y devuelve el
+  /// perfil, igual que [login]. No hay que tocar la URL de arranque ni el
+  /// enrutado, porque la app principal nunca se recarga.
+  ///
+  /// ```dart
+  /// ElevatedButton(
+  ///   onPressed: () async {
+  ///     final user = await db.signInWithProvider(RobleSocialProvider.google);
+  ///   },
+  ///   child: const Text('Entrar con Google'),
+  /// )
+  /// ```
+  ///
+  /// **Llámalo directamente desde el gesto del usuario.** Si haces cualquier
+  /// `await` antes, el navegador bloquea la ventana y esto lanza
+  /// [RobleApiAuthException] diciéndolo.
+  ///
+  /// Requiere que el destino de retorno devuelva la URL a la ventana que abrió
+  /// el proceso; el README trae el fragmento de `index.html` que lo hace.
+  ///
+  /// [extra] y [persistSession] hacen lo mismo que en [socialLoginUrl] y
+  /// [login]. [timeout] es lo que se espera antes de rendirse.
+  ///
+  /// **Fuera de web hay que dar [opener]** —o fijarlo una vez como
+  /// `socialOpener` al crear el cliente—, porque ahí no hay ventana emergente
+  /// que valga. Sin él lanza [RobleApiAuthException] explicándolo. Así el
+  /// paquete no obliga a nadie a cargar con un plugin nativo: ver
+  /// [RobleSocialOpener].
+  ///
+  /// Lanza [RobleApiAuthException] si la ventana se bloquea, si el usuario la
+  /// cierra o si se agota [timeout]; y lo mismo que [completeSocialLogin] si
+  /// el canje falla.
+  Future<Map<String, dynamic>> signInWithProvider(
+    RobleSocialProvider provider, {
+    Map<String, dynamic>? extra,
+    bool persistSession = true,
+    Duration timeout = const Duration(minutes: 5),
+    RobleSocialOpener? opener,
+  }) async {
+    // El de la llamada manda; si no, el de la app; si no, la ventana de web.
+    final abrir = opener ?? socialOpener ?? awaitSocialCallback;
+
+    final callback = await abrir(socialLoginUrl(provider, extra: extra), timeout);
+
+    return completeSocialLogin(callback, persistSession: persistSession);
+  }
+
+  /// `true` si [url] es un retorno del login social.
+  ///
+  /// Para no repartir por la app el conocimiento de que el retorno se
+  /// reconoce por un `?code=`:
+  ///
+  /// ```dart
+  /// // Al arrancar, en web.
+  /// if (db.isSocialCallback(Uri.base)) {
+  ///   await db.completeSocialLogin(Uri.base);
+  /// }
+  /// ```
+  ///
+  /// Solo mira que haya `code`, no que el retorno sea válido del todo: un
+  /// `provider` ausente o desconocido lo diagnostica [completeSocialLogin] con
+  /// un mensaje concreto, que es más útil que ignorar la URL en silencio.
+  bool isSocialCallback(Uri url) =>
+      url.queryParameters['code']?.isNotEmpty ?? false;
+
+  /// Termina el inicio de sesión a partir de la URL de retorno.
+  ///
+  /// Cuando el proveedor acaba, Roble redirige el navegador al `doneUrl` del
+  /// proyecto con `?code=…&provider=…`. Pásale esa URL entera y este método
+  /// canjea el código, guarda la sesión y devuelve el perfil, igual que
+  /// [login].
+  ///
+  /// ```dart
+  /// // En Flutter web, al arrancar la app:
+  /// if (Uri.base.queryParameters.containsKey('code')) {
+  ///   final user = await db.completeSocialLogin(Uri.base);
+  /// }
+  /// ```
+  ///
+  /// [persistSession] hace lo mismo que en [login].
+  ///
+  /// **El código dura 60 segundos y es de un solo uso.** Reutilizarlo o
+  /// tardar más devuelve [RobleApiHttpException] con `400` y el mensaje
+  /// «Código inválido o expirado»; en ese caso hay que rehacer el flujo desde
+  /// [socialLoginUrl].
+  ///
+  /// Lanza [RobleApiAuthException] si la URL no trae `code`, o si `provider`
+  /// falta o no es uno de los soportados.
+  Future<Map<String, dynamic>> completeSocialLogin(
+    Uri callbackUrl, {
+    bool persistSession = true,
+  }) async {
+    final code = callbackUrl.queryParameters['code'];
+    if (code == null || code.isEmpty) {
+      throw const RobleApiAuthException(
+          'La URL de retorno no trae el parámetro "code". Compruébala: debe '
+          'ser la que Roble abrió tras el proveedor, con ?code=…&provider=…');
+    }
+
+    final providerName = callbackUrl.queryParameters['provider'];
+    final provider = RobleSocialProvider.values.firstWhere(
+      (p) => p.name == providerName,
+      orElse: () => throw RobleApiAuthException(
+        'Proveedor no soportado en la URL de retorno: '
+        '${providerName ?? 'ninguno'}. Se esperaba "google" o "microsoft"',
+      ),
+    );
+
+    // El intercambio no lleva bearer y cuelga de /auth, sin el contrato.
+    final res = await _makeRequest(
+      'POST',
+      '${provider.name}/exchange',
+      body: {'code': code},
+      baseUrlOverride: _authBaseUrl,
+      skipAuth: true,
+    );
+
+    _persistTokens = persistSession;
+    // Si esta vez no se quiere recordar la sesión, se borra la anterior.
+    if (!persistSession) await _forgetStoredSession();
+
+    if (res is Map) {
+      _refreshToken = res['refreshToken'] as String?;
+      _updateAccessToken(res['accessToken'] as String?);
+    }
+
+    if (!isLoggedIn) {
+      throw const RobleApiFormatException(
+          'El intercambio no devolvió un access token.');
+    }
+
+    // Se pide el perfil a /me para devolver la misma forma que login().
+    return await currentUser();
+  }
+
+  /// Serializa `extra` comprobando antes lo que el servidor va a rechazar.
+  ///
+  /// Vale más fallar aquí, con el nombre de la clave culpable, que enterarse
+  /// por un `400` a mitad del flujo de OAuth.
+  String _encodeSocialExtra(Map<String, dynamic> extra) {
+    _checkExtraKeys(extra, const []);
+
+    final String encoded;
+    try {
+      encoded = jsonEncode(extra);
+    } catch (e) {
+      throw ArgumentError.value(
+        extra,
+        'extra',
+        'No se puede convertir a JSON: $e',
+      );
+    }
+
+    final bytes = utf8.encode(encoded).length;
+    if (bytes > _extraMaxBytes) {
+      throw ArgumentError.value(
+        extra,
+        'extra',
+        'Ocupa $bytes bytes serializado y el máximo son $_extraMaxBytes',
+      );
+    }
+
+    return encoded;
+  }
+
+  /// Recorre `extra` en profundidad buscando claves reservadas.
+  void _checkExtraKeys(Object? node, List<String> path) {
+    if (node is Map) {
+      for (final entry in node.entries) {
+        final key = '${entry.key}';
+        if (_extraForbiddenKeys.contains(key)) {
+          final donde = path.isEmpty ? '' : ' (en ${path.join('.')})';
+          throw ArgumentError.value(
+            key,
+            'extra',
+            'Roble reserva la clave "$key"$donde; elige otro nombre',
+          );
+        }
+        _checkExtraKeys(entry.value, [...path, key]);
+      }
+    } else if (node is List) {
+      for (var i = 0; i < node.length; i++) {
+        _checkExtraKeys(node[i], [...path, '[$i]']);
+      }
+    }
+  }
+
   /// Refresca el access token con el refresh token almacenado.
   ///
   /// Es interno a propósito: se invoca automáticamente cuando una petición
@@ -716,6 +1049,46 @@ class RobleApiDataBase {
       'execute-query',
       body: {
         'id': id,
+        if (params != null) 'params': params,
+      },
+    );
+
+    if (res is Map) return RobleQueryResult.fromJson(res);
+    throw const RobleApiFormatException(
+        'Respuesta inesperada al ejecutar la consulta');
+  }
+
+  /// Ejecuta una consulta guardada por su **nombre** en vez de por su UUID.
+  ///
+  /// `POST /saved-queries/by-name/{name}/execute`. Hace lo mismo que
+  /// [executeQuery], pero el nombre se lee en la consola de Roble y sobrevive
+  /// a recrear la consulta, mientras que el UUID cambia.
+  ///
+  /// ```dart
+  /// final res = await db.executeQueryByName('ranking_mensual');
+  /// for (final fila in res.rows) print(fila);
+  /// ```
+  ///
+  /// [name] se escapa solo, así que puede llevar espacios o acentos.
+  ///
+  /// Lanza [ArgumentError] si [name] está vacío, y
+  /// [RobleApiHttpException] si el servidor no encuentra la consulta.
+  Future<RobleQueryResult> executeQueryByName(String name,
+      {List<dynamic>? params}) async {
+    final limpio = name.trim();
+    if (limpio.isEmpty) {
+      throw ArgumentError.value(
+        name,
+        'name',
+        'No puede estar vacío. Es el nombre que le diste a la consulta en la '
+            'consola de Roble',
+      );
+    }
+
+    final res = await _makeRequest(
+      'POST',
+      'saved-queries/by-name/${Uri.encodeComponent(limpio)}/execute',
+      body: {
         if (params != null) 'params': params,
       },
     );

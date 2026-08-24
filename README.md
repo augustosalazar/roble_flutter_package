@@ -363,6 +363,222 @@ Elimina la cuenta autenticada de forma permanente y limpia la sesión. `DELETE /
 
 ---
 
+## 🌐 Inicio de sesión con Google y Microsoft
+
+En Roble el login social **también es registro**: un correo nuevo crea un usuario ya verificado, uno existente enlaza la identidad del proveedor con ese usuario, y a partir de ahí simplemente entra. Google y Microsoft pueden enlazar al mismo usuario si comparten correo. Por eso no hay un `signUpWithGoogle` aparte.
+
+El flujo tiene tres pasos, y el de en medio **no lo hace el paquete**:
+
+1. `socialLoginUrl()` te da la URL de arranque.
+2. **Tu app navega a esa URL** y el usuario se autentica en el proveedor. Roble lo devuelve al `doneUrl` del proyecto con `?code=…&provider=…`.
+3. `completeSocialLogin()` canjea ese código y deja la sesión iniciada.
+
+El paso 2 requiere un navegador, no una petición HTTP. El paquete no lo hace por ti para no imponerte una dependencia de `url_launcher` a cambio de cuatro líneas que además cambian según la plataforma.
+
+> **Configura al menos un destino de retorno en la consola de Roble.** Roble ya no deduce a dónde volver a partir de la cabecera `Origin`: resuelve la URL contra una lista de destinos con nombre que se define por proyecto. Sin ninguno configurado el flujo **no arranca**, ni siquiera para probar.
+>
+> Da de alta uno llamado `default` —el que se usa cuando no se pide otro— y tantos como entornos necesites: `web`, `movil`, `dev`. En móvil y escritorio apunta a un esquema propio, `miapp://sso-done`.
+>
+> | Situación | Respuesta de Roble |
+> | --- | --- |
+> | Ningún destino y sin `redirect` | `400 Configura un destino de retorno llamado default o indica ?redirect=nombre al iniciar sesión.` |
+> | `redirect` con un nombre no dado de alta | `400 El destino de retorno solicitado no está autorizado para este proyecto.` |
+
+### `socialConfig`
+
+```dart
+Future<RobleSocialConfig> socialConfig(RobleSocialProvider provider)
+```
+
+Consulta si un proveedor está disponible en el proyecto. `GET /{provider}-config`. Es público: no necesita sesión.
+
+Sirve para no pintar un botón que va a fallar — arrancar el flujo con un proveedor apagado responde `403`.
+
+Devuelve `RobleSocialConfig` con `enabled`, `clientId` y `tenantId` (este último solo en Microsoft; en Google siempre es `null`).
+
+```dart
+final google = await db.socialConfig(RobleSocialProvider.google);
+if (google.enabled) mostrarBotonGoogle();
+```
+
+### `signInWithProvider`
+
+```dart
+Future<Map<String, dynamic>> signInWithProvider(
+  RobleSocialProvider provider, {
+  Map<String, dynamic>? extra,
+  bool persistSession = true,
+  Duration timeout = const Duration(minutes: 5),
+})
+```
+
+El camino corto: abre el proveedor en una ventana, espera el retorno, canjea el
+código y devuelve el perfil — **la misma forma que `login`**. La app principal
+nunca se descarga, así que no hay que tocar la URL de arranque ni el enrutado.
+
+```dart
+FilledButton(
+  onPressed: () async {
+    final user = await db.signInWithProvider(RobleSocialProvider.google);
+  },
+  child: const Text('Entrar con Google'),
+)
+```
+
+**Llámalo directamente desde el gesto del usuario.** Si haces cualquier `await`
+antes, el navegador considera que la ventana no la pidió nadie, la bloquea, y
+esto lanza `RobleApiAuthException` diciéndolo.
+
+#### Fuera de web: `opener`
+
+La ventana emergente solo existe en web. En móvil y escritorio le pasas tú cómo
+se abre el proveedor, con un `RobleSocialOpener`: una función que recibe la URL
+de arranque y devuelve la URL de retorno.
+
+```dart
+final db = RobleApiDataBase(
+  config: …,
+  socialOpener: (loginUrl, timeout) async => Uri.parse(
+    await FlutterWebAuth2.authenticate(
+      url: loginUrl.toString(),
+      callbackUrlScheme: 'miapp',
+    ),
+  ),
+);
+```
+
+Se fija una vez al crear el cliente, como `ssoRedirect`, y `signInWithProvider`
+acepta un `opener` por llamada que lo sustituye. Sin ninguno de los dos y fuera
+de web, lanza `RobleApiAuthException` diciéndolo.
+
+Es deliberado que el paquete no elija el plugin: así `roble` no arrastra código
+nativo a quien nunca toca el login social, y tú usas el que prefieras —
+`flutter_web_auth_2`, un listener de deep links, lo que sea— sin esperar a que
+la librería lo bendiga. Recuerda que ese camino necesita además el esquema
+propio registrado en `AndroidManifest.xml` e `Info.plist`, y dado de alta como
+destino de retorno en la consola.
+
+#### Lo que hay que añadir a `web/index.html`
+
+La ventana vuelve al destino de retorno, que debe devolver la URL a quien la
+abrió. Pega esto dentro del `<head>`, **antes** del script de Flutter:
+
+```html
+<script>
+  (function () {
+    var params = new URLSearchParams(window.location.search);
+    if (!params.get('code') || !window.opener) return;
+    window.opener.postMessage('roble-sso:' + window.location.href,
+      window.location.origin);
+    window.close();
+  })();
+</script>
+```
+
+Al salir temprano cuando no hay `code`, un arranque normal de la app no se
+entera de nada. Y como se ejecuta antes que Flutter, la ventana se cierra sin
+llegar a cargar la app entera.
+
+El destino de retorno configurado en la consola debe apuntar a esa misma
+página, y estar en **el mismo origen** que la app: el mensaje se rechaza si
+viene de otro, que es lo que impide que una página cualquiera se invente un
+inicio de sesión.
+
+**Errores**: `RobleApiAuthException` si la ventana se bloquea, si el usuario la
+cierra antes de terminar, o si se agota `timeout`. Lo que falle en el canje sale
+tal cual de `completeSocialLogin`.
+
+### `socialLoginUrl`
+
+```dart
+Uri socialLoginUrl(
+  RobleSocialProvider provider, {
+  Map<String, dynamic>? extra,
+  String? redirect,
+})
+```
+
+Construye la URL de arranque. **No hace ninguna petición**: hay que navegar a ella.
+
+| Parámetro | Descripción |
+| --- | --- |
+| `provider` | `RobleSocialProvider.google` o `.microsoft`. |
+| `extra` | Campos adicionales que se guardan en el perfil del usuario. Los existentes se conservan; los que coincidan se sobrescriben. |
+| `redirect` | Nombre del destino de retorno al que debe volver el usuario. Si se omite, Roble usa el llamado `default`. |
+
+`redirect` es lo que permite que la app web, la de móvil y tu entorno de desarrollo compartan proyecto y vuelva cada una a su sitio:
+
+```dart
+// La misma app, dos entornos.
+db.socialLoginUrl(RobleSocialProvider.google, redirect: 'dev');
+db.socialLoginUrl(RobleSocialProvider.google, redirect: 'produccion');
+```
+
+```dart
+final url = db.socialLoginUrl(
+  RobleSocialProvider.google,
+  extra: {'departamento': 'ingenieria', 'codigo': 12345},
+);
+await launchUrl(url, mode: LaunchMode.externalApplication);
+```
+
+`extra` **viaja en la URL**, así que no pongas nada secreto ahí — queda en el historial del navegador y en los logs del servidor.
+
+**Errores** — todos `ArgumentError`, lanzados en el acto y no tras el `400` del servidor a mitad del flujo:
+
+| Causa | Mensaje |
+| --- | --- |
+| `redirect` vacío o solo espacios | `No puede estar vacío. Es el nombre de un destino de retorno configurado en la consola de Roble; omítelo para usar "default"` |
+| Clave reservada por Roble, a cualquier nivel de anidamiento | `Roble reserva la clave "isAdmin" (en perfil.datos); elige otro nombre` |
+| Más de 4 KB serializado | `Ocupa 5013 bytes serializado y el máximo son 4096` |
+| Valor no convertible a JSON | `No se puede convertir a JSON: …` |
+
+Las claves reservadas son `role`, `roleId`, `permissions`, `isAdmin`, `isVerified`, `isSSO`, `userId`, `user_id`, `constructor`, `prototype` y `__proto__`.
+
+### `completeSocialLogin`
+
+```dart
+Future<Map<String, dynamic>> completeSocialLogin(
+  Uri callbackUrl, {
+  bool persistSession = true,
+})
+```
+
+Termina el inicio de sesión a partir de la URL de retorno. Lee `code` y `provider`, canja el código contra `POST /auth/{provider}/exchange`, guarda la sesión y devuelve el perfil — **la misma forma que `login`**, porque termina pidiendo `/me`.
+
+`persistSession` hace lo mismo que en `login`.
+
+```dart
+// Flutter web: al arrancar la app.
+if (Uri.base.queryParameters.containsKey('code')) {
+  final user = await db.completeSocialLogin(Uri.base);
+  print('Hola ${user['name']}');
+}
+```
+
+**El código dura 60 segundos y es de un solo uso.** Es lo primero que hay que mirar cuando el flujo falla en pruebas: recargar la página de retorno lo reutiliza y falla.
+
+**Errores**:
+
+| Excepción | Cuándo |
+| --- | --- |
+| `RobleApiAuthException` | La URL no trae `code`, o `provider` falta o no es `google`/`microsoft`. |
+| `RobleApiHttpException` `400` | `Código inválido o expirado` — reusado o pasados los 60 s. Hay que rehacer el flujo desde `socialLoginUrl`. |
+| `RobleApiFormatException` | El intercambio no devolvió un access token. |
+
+### Vidas útiles
+
+| | |
+| --- | --- |
+| Código de intercambio | 60 segundos, un solo uso |
+| `state` de OAuth | 5 minutos |
+| Access token | 15 minutos |
+| Refresh token | 7 días |
+
+El paquete renueva el access token solo, igual que con el login normal.
+
+---
+
 ## 🗄️ Datos
 
 ### `create`
@@ -494,6 +710,35 @@ final res = await db.executeQuery(
 );
 print('${res.rowCount} filas');
 ```
+
+### `executeQueryByName`
+
+```dart
+Future<RobleQueryResult> executeQueryByName(String name, {List<dynamic>? params})
+```
+
+Lo mismo que `executeQuery`, pero identificando la consulta por su **nombre**. `POST /saved-queries/by-name/{name}/execute`.
+
+Es la forma preferible en código que se mantiene: el nombre lo eliges tú y sigue siendo el mismo si borras y recreas la consulta, mientras que el UUID cambia y deja el código apuntando a algo que ya no existe.
+
+| Parámetro | Descripción |
+| --- | --- |
+| `name` | Nombre de la consulta en la consola. Se escapa solo, así que puede llevar espacios y acentos. |
+| `params` | Parámetros posicionales de la consulta. |
+
+**Devuelve** el mismo `RobleQueryResult` que `executeQuery`.
+
+```dart
+final res = await db.executeQueryByName('ranking_mensual', params: [2026]);
+for (final fila in res.rows) print(fila);
+```
+
+**Errores**:
+
+| Excepción | Cuándo |
+| --- | --- |
+| `ArgumentError` | `name` vacío o solo espacios. |
+| `RobleApiHttpException` | El servidor no encuentra la consulta con ese nombre. |
 
 ---
 

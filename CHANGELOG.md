@@ -1,5 +1,62 @@
 # Changelog
 
+## 1.4.0
+
+### Añadido
+
+- **`signInWithProvider(provider)`: login social en una sola llamada.** Abre el
+  proveedor en una ventana emergente, espera el retorno y devuelve el perfil,
+  igual que `login`. Como la app no se descarga, la respuesta llega por `await`
+  y no por la URL de arranque: desaparece la necesidad de leer `Uri.base`, de
+  limpiar la barra de direcciones y de enseñarle al enrutador qué hacer con
+  `?code=`. Requiere un fragmento de tres líneas en `web/index.html`, que está
+  en el README. En web trae la ventana emergente puesta; en móvil y escritorio
+  le pasas un `RobleSocialOpener` —al crear el cliente con `socialOpener`, o por
+  llamada— que abra el proveedor con el plugin que uses. El paquete no elige por
+  ti para no arrastrar código nativo a quien no usa login social.
+
+- **Inicio de sesión con Google y Microsoft.** En Roble el login social es
+  también registro: un correo nuevo crea un usuario ya verificado y uno
+  existente enlaza la identidad del proveedor, así que no hay un
+  `signUpWithGoogle` aparte.
+
+  - `socialConfig(provider)` consulta si el proveedor está activo en el
+    proyecto, sin necesitar sesión. Sirve para no pintar un botón que
+    respondería `403`.
+  - `socialLoginUrl(provider, {extra, redirect})` construye la URL de
+    arranque. No hace ninguna petición: hay que navegar a ella. El paquete
+    deliberadamente no abre el navegador, para no arrastrar `url_launcher` a
+    todo el que use la librería sin tocar el login social. `redirect` elige,
+    por nombre, a cuál de los destinos de retorno configurados en la consola
+    vuelve el usuario; omitirlo usa el llamado `default`. Es lo que permite
+    que la app web, la de móvil y el entorno de desarrollo compartan proyecto
+    y vuelva cada una a su sitio. **Un proyecto sin destinos configurados no
+    puede arrancar el flujo**: Roble ya no deduce el retorno de la cabecera
+    `Origin`.
+  - `completeSocialLogin(callbackUrl, {persistSession})` canjea el código de
+    la URL de retorno, guarda la sesión y devuelve el perfil — la misma forma
+    que `login`.
+
+  Con ellos llegan `RobleSocialProvider` y `RobleSocialConfig`.
+
+- **`extra` se valida antes de salir a la red.** Como viaja en la URL del
+  navegador, un `extra` inválido se descubriría a mitad del flujo de OAuth,
+  cuando ya es tarde para dar un mensaje útil. Ahora `socialLoginUrl` lanza
+  `ArgumentError` en el acto si supera los 4 KB serializado, si no es
+  convertible a JSON, o si usa una clave que Roble reserva —`role`,
+  `isAdmin`, `userId`, `permissions`, `__proto__`…— **a cualquier nivel de
+  anidamiento**, indicando la ruta exacta de la clave culpable.
+
+- **`executeQueryByName(name, {params})`** ejecuta una consulta guardada por
+  su nombre en vez de por su UUID
+  (`POST /saved-queries/by-name/{name}/execute`). Es lo preferible en código
+  que se mantiene: el nombre sobrevive a borrar y recrear la consulta, el UUID
+  no. El nombre se escapa solo, así que admite espacios y acentos.
+
+- Primeras pruebas del paquete (`test/`), sobre el `MockClient` de `http`: 36
+  casos que cubren el flujo social completo, la validación de `extra`, la
+  persistencia de la sesión y las consultas guardadas.
+
 ## 1.3.0
 
 ### Añadido
