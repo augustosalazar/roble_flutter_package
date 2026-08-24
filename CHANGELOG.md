@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.5.0
+
+### Añadido
+
+- **`signInWithIdToken(provider:, idToken:, nonce:)`: login con el SDK nativo.**
+  El equivalente de `signInWithIdToken` de Supabase, y el camino que mejor
+  encaja en una app: `google_sign_in` devuelve el `idToken`, se manda y ya hay
+  sesión. Sin navegador, sin ventana emergente, sin esquema de URL personalizado
+  y sin retorno que enrutar. Solo para proveedores OIDC —Google y Microsoft—;
+  GitHub es OAuth2 y no emite `id_token`.
+
+- **`listProviders()`: los proveedores activos, en una llamada.** Reemplaza a
+  `socialConfig`, que había que llamar una vez por proveedor y solo conocía los
+  dos del enum. Devuelve también `autoLinkSupported`, que dice si ese proveedor
+  puede vincularse solo con una cuenta que ya existe. Añadir un proveedor en el
+  servidor deja de obligar a publicar una versión del paquete.
+
+- **`startSocialLogin(provider)` + `exchangeSocialCode(code)`: el flujo de
+  navegador con PKCE.** Frente a `socialLoginUrl`:
+  - Añade PKCE (RFC 7636), así que un código interceptado no sirve sin el
+    verifier, que nunca sale del proceso. En móvil importa, porque otra app
+    puede registrar el mismo esquema de URL y quedarse con el retorno.
+  - `extra` viaja en el cuerpo y no en la URL, así que deja de aparecer en los
+    logs de acceso, en los del proxy y en el historial.
+  - Acepta cualquier proveedor por nombre, no solo los del enum.
+
+- **`RobleApiConflictException`.** El `409` que devuelve Roble cuando el
+  proveedor no certifica el correo y ese correo ya tiene cuenta —el caso de
+  Microsoft, porque la mayoría de registros de Entra de un solo tenant no emiten
+  `email_verified`—. No se arregla reintentando: hay que entrar con el método
+  que ya se tiene y vincular el proveedor desde los ajustes. Extiende
+  `RobleApiHttpException`, así que quien ya capturaba el `409` por código sigue
+  igual.
+
+- **`RoblePkce`**, por si se quiere manejar el par a mano.
+
+### Notas
+
+- Nada se ha quitado ni ha cambiado de forma. `socialConfig`, `socialLoginUrl`,
+  `completeSocialLogin` y `signInWithProvider` siguen funcionando exactamente
+  igual, contra los mismos endpoints.
+- Los métodos nuevos hablan con los endpoints genéricos del servidor, que están
+  detrás de `AUTH_V2_PROVIDERS`. Con la bandera apagada responden `400`.
+- Nueva dependencia: `crypto`, para el SHA-256 de PKCE.
+
 ## 1.4.0
 
 ### Añadido

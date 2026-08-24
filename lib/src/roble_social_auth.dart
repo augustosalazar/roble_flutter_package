@@ -69,3 +69,42 @@ class RobleSocialConfig {
       'RobleSocialConfig(enabled: $enabled, clientId: $clientId, '
       'tenantId: $tenantId)';
 }
+
+/// Un proveedor habilitado en el proyecto, tal como lo devuelve
+/// `GET /{contrato}/auth/providers`.
+///
+/// Es el reemplazo de [RobleSocialConfig]: una sola llamada devuelve todos los
+/// proveedores activos, así que añadir uno nuevo en el servidor no obliga a
+/// tocar la app. Tampoco expone el `clientId`, que la app nunca necesitó.
+class RobleProviderInfo {
+  /// Identificador estable: `google`, `microsoft`, `github`…
+  final String name;
+
+  /// Nombre para mostrar en el botón.
+  final String displayName;
+
+  /// `true` si el proveedor certifica que el correo está verificado.
+  ///
+  /// Cuando es `false`, entrar con ese proveedor usando un correo que ya tiene
+  /// cuenta responde `409` ([RobleApiConflictException]) en vez de vincularse
+  /// solo. Conviene avisarlo en la interfaz antes, no después.
+  final bool autoLinkSupported;
+
+  const RobleProviderInfo({
+    required this.name,
+    required this.displayName,
+    required this.autoLinkSupported,
+  });
+
+  factory RobleProviderInfo.fromJson(Map<dynamic, dynamic> json) {
+    return RobleProviderInfo(
+      name: json['name'] as String? ?? '',
+      displayName: json['displayName'] as String? ?? '',
+      autoLinkSupported: json['autoLinkSupported'] == true,
+    );
+  }
+
+  @override
+  String toString() => 'RobleProviderInfo(name: $name, '
+      'displayName: $displayName, autoLinkSupported: $autoLinkSupported)';
+}

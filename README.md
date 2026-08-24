@@ -579,6 +579,89 @@ El paquete renueva el access token solo, igual que con el login normal.
 
 ---
 
+## ✨ Login social v2
+
+Los métodos de arriba siguen funcionando igual. Estos hablan con los endpoints
+genéricos del servidor, que están detrás de `AUTH_V2_PROVIDERS`: con la bandera
+apagada responden `400`.
+
+### `signInWithIdToken`
+
+El camino corto en una app: el SDK nativo da el `idToken` y aquí se acaba. Sin
+navegador, sin ventana emergente, sin esquema de URL personalizado y sin retorno
+que enrutar. Es el equivalente de `signInWithIdToken` de Supabase.
+
+```dart
+final cuenta = await GoogleSignIn().signIn();
+final auth = await cuenta!.authentication;
+
+final user = await db.signInWithIdToken(
+  provider: 'google',
+  idToken: auth.idToken!,
+);
+```
+
+`nonce` es el que se le pidió al SDK nativo. Mándalo si lo usaste: el servidor
+comprueba que coincida, y eso es lo que impide reutilizar un `id_token`
+capturado.
+
+Solo vale para proveedores OIDC —Google y Microsoft—. GitHub es OAuth2 y no
+emite `id_token`, así que responde `400`.
+
+### `listProviders`
+
+Una llamada devuelve todos los proveedores activos, así que añadir uno en el
+servidor no obliga a publicar una versión nueva de la app.
+
+```dart
+for (final p in await db.listProviders()) {
+  botones.add(BotonSocial(p.displayName, () => db.startSocialLogin(p.name)));
+}
+```
+
+`autoLinkSupported` dice si ese proveedor puede vincularse solo con una cuenta
+que ya existe. Cuando es `false`, conviene avisarlo en la interfaz **antes** de
+que el usuario pulse, no después del `409`.
+
+### `startSocialLogin` + `exchangeSocialCode`
+
+El flujo de navegador, con PKCE. `startSocialLogin` es asíncrono porque el
+servidor crea el flujo antes de decir a dónde ir.
+
+```dart
+final url = await db.startSocialLogin('google');
+await launchUrl(url, mode: LaunchMode.externalApplication);
+
+// Al volver, con el code de la URL de retorno:
+final user = await db.exchangeSocialCode(code);
+```
+
+Frente a `socialLoginUrl`: el código interceptado no sirve sin el verifier, que
+nunca sale del proceso —en móvil importa, porque otra app puede registrar el
+mismo esquema de URL—, y `extra` viaja en el cuerpo, así que deja de aparecer en
+los logs de acceso, en los del proxy y en el historial.
+
+### Cuentas que ya existen
+
+Si el proveedor no certifica que el correo esté verificado y ese correo ya tiene
+cuenta, Roble responde `409` y lanza `RobleApiConflictException`. Le pasa sobre
+todo a Microsoft, porque la mayoría de registros de Entra de un solo tenant no
+emiten `email_verified`.
+
+```dart
+try {
+  await db.signInWithIdToken(provider: 'microsoft', idToken: t);
+} on RobleApiConflictException catch (e) {
+  mostrar(e.message); // entra con tu método actual y vincula desde ajustes
+}
+```
+
+No se arregla reintentando: es deliberado, porque sin esa prueba quien controle
+un tenant del proveedor podría fijar el correo de otra persona y heredar su
+cuenta.
+
+---
+
 ## 🗄️ Datos
 
 ### `create`

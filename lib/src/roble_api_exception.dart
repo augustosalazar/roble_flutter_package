@@ -89,3 +89,19 @@ class RoblePartialInsertException extends RobleApiException {
             '${result.inserted.length + result.skipped.length} registros: '
             '${result.skipped.map((s) => 'fila ${s.index} (${s.reason})').join('; ')}');
 }
+
+/// El proveedor social no pudo vincularse solo con una cuenta que ya existe.
+///
+/// Roble responde `409` cuando el proveedor no certifica que el correo esté
+/// verificado y ese correo ya pertenece a una cuenta. Es deliberado: sin esa
+/// prueba, quien controle un tenant del proveedor podría fijar el correo de
+/// otra persona y heredar su cuenta. Le pasa sobre todo a Microsoft, porque la
+/// mayoría de registros de Entra de un solo tenant no emiten `email_verified`.
+///
+/// No es un fallo recuperable reintentando: el usuario entra con el método que
+/// ya tiene y vincula el proveedor desde los ajustes de su cuenta.
+/// Extiende [RobleApiHttpException] a propósito: quien ya capturaba el `409`
+/// por código sigue capturándolo igual.
+class RobleApiConflictException extends RobleApiHttpException {
+  const RobleApiConflictException(String message) : super(409, message);
+}

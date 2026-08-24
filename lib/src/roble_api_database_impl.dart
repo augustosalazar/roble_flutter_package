@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'roble_api_config.dart';
 import 'roble_api_exception.dart';
 import 'roble_models.dart';
+import 'roble_pkce.dart';
 import 'roble_social_auth.dart';
 import 'roble_social_window.dart';
 import 'roble_storage.dart';
@@ -31,6 +32,12 @@ class RobleApiDataBase {
   /// Si la sesión debe sobrevivir al cierre de la app. Lo fija `login` con su
   /// parámetro `persistSession` y afecta también a los refrescos posteriores.
   bool _persistTokens = true;
+
+  /// Verifier del flujo social v2 en curso, a la espera del canje.
+  ///
+  /// Vive en memoria y solo hasta que [exchangeSocialCode] lo consume: si
+  /// sobreviviera al intento, un código robado podría canjearse más tarde.
+  RoblePkce? _pkcePendiente;
 
   late final String _storageKey =
       'roble.session.${config.authUrl.split('/').last}';
@@ -823,6 +830,208 @@ class RobleApiDataBase {
 
     // Se pide el perfil a /me para devolver la misma forma que login().
     return await currentUser();
+  }
+
+  // ============================================================
+  // ============= LOGIN SOCIAL v2 ==============================
+  // ============================================================
+  //
+  // Conviven con los métodos de arriba, que siguen funcionando. Estos hablan
+  // con los endpoints genéricos, que están detrás de AUTH_V2_PROVIDERS en el
+  // servidor: con la bandera apagada responden 400.
+
+  /// Guarda los tokens de una respuesta de sesión y devuelve el perfil.
+  ///
+  /// Es lo que ya hacían `login` y el canje social, en un solo sitio.
+  Future<Map<String, dynamic>> _iniciarSesionCon(
+    dynamic res,
+    bool persistSession,
+  ) async {
+    _persistTokens = persistSession;
+    if (!persistSession) await _forgetStoredSession();
+
+    if (res is Map) {
+      _refreshToken = res['refreshToken'] as String?;
+      _updateAccessToken(res['accessToken'] as String?);
+    }
+
+    if (!isLoggedIn) {
+      throw const RobleApiFormatException(
+          'La respuesta no incluyó un access token.');
+    }
+
+    return await currentUser();
+  }
+
+  /// Convierte el `409` del servidor en [RobleApiConflictException].
+  ///
+  /// Merece su propio tipo porque no se arregla reintentando: hay que entrar
+  /// con el método que ya se tiene y vincular el proveedor después.
+  Future<T> _traduciendoConflicto<T>(Future<T> Function() accion) async {
+    try {
+      return await accion();
+    } on RobleApiConflictException {
+      rethrow;
+    } on RobleApiHttpException catch (e) {
+      if (e.statusCode == 409) throw RobleApiConflictException(e.message);
+      rethrow;
+    }
+  }
+
+  /// Proveedores habilitados en el proyecto, en una sola llamada.
+  ///
+  /// Reemplaza a [socialConfig]: sirve para pintar los botones sin saber de
+  /// antemano qué proveedores hay, así que añadir uno en el servidor no obliga
+  /// a publicar una versión nueva de la app.
+  ///
+  /// ```dart
+  /// for (final p in await db.listProviders()) {
+  ///   botones.add(BotonSocial(p.displayName, () => db.startSocialLogin(p.name)));
+  /// }
+  /// ```
+  Future<List<RobleProviderInfo>> listProviders() async {
+    final res = await _makeRequest(
+      'GET',
+      'auth/providers',
+      isAuthRequest: true,
+      skipAuth: true,
+    );
+
+    if (res is List) {
+      return res
+          .whereType<Map>()
+          .map(RobleProviderInfo.fromJson)
+          .toList(growable: false);
+    }
+    throw const RobleApiFormatException(
+        'Respuesta inesperada al listar los proveedores.');
+  }
+
+  /// Arranca el login social v2 y devuelve la URL a la que hay que navegar.
+  ///
+  /// Frente a [socialLoginUrl]:
+  ///
+  /// - Añade **PKCE**, así que un código interceptado no sirve sin el verifier
+  ///   que se queda en este proceso. En móvil importa: otra app puede
+  ///   registrar el mismo esquema de URL y quedarse con el retorno.
+  /// - `extra` viaja en el **cuerpo**, no en la URL, así que deja de aparecer
+  ///   en los logs de acceso, en los del proxy y en el historial.
+  /// - Acepta cualquier proveedor por nombre, no solo los dos del enum.
+  ///
+  /// Es asíncrono porque el servidor tiene que crear el flujo antes de decir a
+  /// dónde ir. Después hay que llamar a [exchangeSocialCode] con el `code`
+  /// que llega en la URL de retorno.
+  Future<Uri> startSocialLogin(
+    String provider, {
+    Map<String, dynamic>? extra,
+    String? redirect,
+    String? scopes,
+    bool offlineAccess = false,
+  }) async {
+    final pkce = RoblePkce.generar();
+
+    final destino = _validarRedirect(redirect, 'redirect') ?? ssoRedirect;
+    final res = await _makeRequest(
+      'POST',
+      'auth/$provider/start',
+      isAuthRequest: true,
+      skipAuth: true,
+      body: {
+        'codeChallenge': pkce.challenge,
+        if (destino != null) 'redirect': destino,
+        if (extra != null && extra.isNotEmpty) 'extra': extra,
+        if (scopes != null) 'scopes': scopes,
+        if (offlineAccess) 'offlineAccess': true,
+      },
+    );
+
+    if (res is! Map || res['url'] is! String) {
+      throw const RobleApiFormatException(
+          'El servidor no devolvió la URL de inicio del proveedor.');
+    }
+
+    // Solo se guarda si el servidor aceptó el flujo: si falló, no queda un
+    // verifier huérfano que confunda al canje siguiente.
+    _pkcePendiente = pkce;
+    return Uri.parse(res['url'] as String);
+  }
+
+  /// Canjea el código del retorno por una sesión, y devuelve el perfil.
+  ///
+  /// Consume el verifier de [startSocialLogin], de modo que un canje fallido
+  /// no se puede reintentar con el mismo: se arranca un login nuevo.
+  ///
+  /// Lanza [RobleApiConflictException] si el proveedor no certifica el correo
+  /// y ese correo ya tiene cuenta.
+  Future<Map<String, dynamic>> exchangeSocialCode(
+    String code, {
+    bool persistSession = true,
+  }) async {
+    final pkce = _pkcePendiente;
+    _pkcePendiente = null;
+
+    final res = await _traduciendoConflicto(() => _makeRequest(
+          'POST',
+          'auth/token',
+          isAuthRequest: true,
+          skipAuth: true,
+          body: {
+            'code': code,
+            if (pkce != null) 'codeVerifier': pkce.verifier,
+          },
+        ));
+
+    return _iniciarSesionCon(res, persistSession);
+  }
+
+  /// Inicia sesión con un `id_token` que ya obtuvo el SDK nativo.
+  ///
+  /// Es el equivalente de `signInWithIdToken` de Supabase, y el camino que
+  /// mejor encaja en una app: `google_sign_in` devuelve el `idToken`, se manda
+  /// aquí y se acabó. Sin navegador, sin ventana emergente, sin esquema de URL
+  /// personalizado y sin retorno que enrutar.
+  ///
+  /// ```dart
+  /// final cuenta = await GoogleSignIn().signIn();
+  /// final auth = await cuenta!.authentication;
+  /// final user = await db.signInWithIdToken(
+  ///   provider: 'google',
+  ///   idToken: auth.idToken!,
+  /// );
+  /// ```
+  ///
+  /// [nonce] es el que se pidió al SDK nativo. Mándalo si lo usaste: el
+  /// servidor comprueba que coincida, que es lo que impide reutilizar un
+  /// `id_token` capturado.
+  ///
+  /// Solo vale para proveedores OIDC —Google y Microsoft—. GitHub es OAuth2 y
+  /// no emite `id_token`, así que responde `400`.
+  ///
+  /// Lanza [RobleApiConflictException] si el proveedor no certifica el correo
+  /// y ese correo ya tiene cuenta.
+  Future<Map<String, dynamic>> signInWithIdToken({
+    required String provider,
+    required String idToken,
+    String? nonce,
+    bool persistSession = true,
+  }) async {
+    if (idToken.isEmpty) {
+      throw ArgumentError.value(idToken, 'idToken', 'No puede estar vacío');
+    }
+
+    final res = await _traduciendoConflicto(() => _makeRequest(
+          'POST',
+          'auth/id-token',
+          isAuthRequest: true,
+          skipAuth: true,
+          body: {
+            'provider': provider,
+            'token': idToken,
+            if (nonce != null) 'nonce': nonce,
+          },
+        ));
+
+    return _iniciarSesionCon(res, persistSession);
   }
 
   /// Serializa `extra` comprobando antes lo que el servidor va a rechazar.
