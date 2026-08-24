@@ -35,47 +35,12 @@ typedef RobleSocialOpener = Future<Uri> Function(Uri loginUrl, Duration timeout)
 /// retorno.
 enum RobleSocialProvider { google, microsoft }
 
-/// Estado de un proveedor en el proyecto, tal como lo devuelve
-/// `GET /{provider}-config`.
-///
-/// Sirve para decidir si se pinta el botón de "Entrar con…" antes de iniciar
-/// nada: si [enabled] es `false`, arrancar el flujo daría un `403`.
-class RobleSocialConfig {
-  /// `true` si el proveedor está configurado y activo en el proyecto.
-  final bool enabled;
-
-  /// Identificador de cliente registrado en la consola del proveedor.
-  final String? clientId;
-
-  /// Directorio de Microsoft. Siempre `null` en Google.
-  final String? tenantId;
-
-  const RobleSocialConfig({
-    required this.enabled,
-    this.clientId,
-    this.tenantId,
-  });
-
-  factory RobleSocialConfig.fromJson(Map<dynamic, dynamic> json) {
-    return RobleSocialConfig(
-      enabled: json['enabled'] == true,
-      clientId: json['clientId'] as String?,
-      tenantId: json['tenantId'] as String?,
-    );
-  }
-
-  @override
-  String toString() =>
-      'RobleSocialConfig(enabled: $enabled, clientId: $clientId, '
-      'tenantId: $tenantId)';
-}
-
 /// Un proveedor habilitado en el proyecto, tal como lo devuelve
 /// `GET /{contrato}/auth/providers`.
 ///
-/// Es el reemplazo de [RobleSocialConfig]: una sola llamada devuelve todos los
-/// proveedores activos, así que añadir uno nuevo en el servidor no obliga a
-/// tocar la app. Tampoco expone el `clientId`, que la app nunca necesitó.
+/// Una sola llamada devuelve todos los proveedores activos, así que añadir uno
+/// nuevo en el servidor no obliga a tocar la app. No expone el `clientId`, que
+/// la app nunca necesitó.
 class RobleProviderInfo {
   /// Identificador estable: `google`, `microsoft`, `github`…
   final String name;

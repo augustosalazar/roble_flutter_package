@@ -369,9 +369,11 @@ En Roble el login social **también es registro**: un correo nuevo crea un usuar
 
 El flujo tiene tres pasos, y el de en medio **no lo hace el paquete**:
 
-1. `socialLoginUrl()` te da la URL de arranque.
+1. `startSocialLogin()` abre el flujo en el servidor y te da la URL de arranque.
 2. **Tu app navega a esa URL** y el usuario se autentica en el proveedor. Roble lo devuelve al `doneUrl` del proyecto con `?code=…&provider=…`.
-3. `completeSocialLogin()` canjea ese código y deja la sesión iniciada.
+3. `exchangeSocialCode()` canjea ese código y deja la sesión iniciada.
+
+`signInWithProvider()` hace los tres de una vez en una ventana emergente, y en una app nativa `signInWithIdToken()` se los salta todos.
 
 El paso 2 requiere un navegador, no una petición HTTP. El paquete no lo hace por ti para no imponerte una dependencia de `url_launcher` a cambio de cuatro líneas que además cambian según la plataforma.
 
@@ -383,23 +385,6 @@ El paso 2 requiere un navegador, no una petición HTTP. El paquete no lo hace po
 > | --- | --- |
 > | Ningún destino y sin `redirect` | `400 Configura un destino de retorno llamado default o indica ?redirect=nombre al iniciar sesión.` |
 > | `redirect` con un nombre no dado de alta | `400 El destino de retorno solicitado no está autorizado para este proyecto.` |
-
-### `socialConfig`
-
-```dart
-Future<RobleSocialConfig> socialConfig(RobleSocialProvider provider)
-```
-
-Consulta si un proveedor está disponible en el proyecto. `GET /{provider}-config`. Es público: no necesita sesión.
-
-Sirve para no pintar un botón que va a fallar — arrancar el flujo con un proveedor apagado responde `403`.
-
-Devuelve `RobleSocialConfig` con `enabled`, `clientId` y `tenantId` (este último solo en Microsoft; en Google siempre es `null`).
-
-```dart
-final google = await db.socialConfig(RobleSocialProvider.google);
-if (google.enabled) mostrarBotonGoogle();
-```
 
 ### `signInWithProvider`
 
@@ -486,85 +471,7 @@ inicio de sesión.
 
 **Errores**: `RobleApiAuthException` si la ventana se bloquea, si el usuario la
 cierra antes de terminar, o si se agota `timeout`. Lo que falle en el canje sale
-tal cual de `completeSocialLogin`.
-
-### `socialLoginUrl`
-
-```dart
-Uri socialLoginUrl(
-  RobleSocialProvider provider, {
-  Map<String, dynamic>? extra,
-  String? redirect,
-})
-```
-
-Construye la URL de arranque. **No hace ninguna petición**: hay que navegar a ella.
-
-| Parámetro | Descripción |
-| --- | --- |
-| `provider` | `RobleSocialProvider.google` o `.microsoft`. |
-| `extra` | Campos adicionales que se guardan en el perfil del usuario. Los existentes se conservan; los que coincidan se sobrescriben. |
-| `redirect` | Nombre del destino de retorno al que debe volver el usuario. Si se omite, Roble usa el llamado `default`. |
-
-`redirect` es lo que permite que la app web, la de móvil y tu entorno de desarrollo compartan proyecto y vuelva cada una a su sitio:
-
-```dart
-// La misma app, dos entornos.
-db.socialLoginUrl(RobleSocialProvider.google, redirect: 'dev');
-db.socialLoginUrl(RobleSocialProvider.google, redirect: 'produccion');
-```
-
-```dart
-final url = db.socialLoginUrl(
-  RobleSocialProvider.google,
-  extra: {'departamento': 'ingenieria', 'codigo': 12345},
-);
-await launchUrl(url, mode: LaunchMode.externalApplication);
-```
-
-`extra` **viaja en la URL**, así que no pongas nada secreto ahí — queda en el historial del navegador y en los logs del servidor.
-
-**Errores** — todos `ArgumentError`, lanzados en el acto y no tras el `400` del servidor a mitad del flujo:
-
-| Causa | Mensaje |
-| --- | --- |
-| `redirect` vacío o solo espacios | `No puede estar vacío. Es el nombre de un destino de retorno configurado en la consola de Roble; omítelo para usar "default"` |
-| Clave reservada por Roble, a cualquier nivel de anidamiento | `Roble reserva la clave "isAdmin" (en perfil.datos); elige otro nombre` |
-| Más de 4 KB serializado | `Ocupa 5013 bytes serializado y el máximo son 4096` |
-| Valor no convertible a JSON | `No se puede convertir a JSON: …` |
-
-Las claves reservadas son `role`, `roleId`, `permissions`, `isAdmin`, `isVerified`, `isSSO`, `userId`, `user_id`, `constructor`, `prototype` y `__proto__`.
-
-### `completeSocialLogin`
-
-```dart
-Future<Map<String, dynamic>> completeSocialLogin(
-  Uri callbackUrl, {
-  bool persistSession = true,
-})
-```
-
-Termina el inicio de sesión a partir de la URL de retorno. Lee `code` y `provider`, canja el código contra `POST /auth/{provider}/exchange`, guarda la sesión y devuelve el perfil — **la misma forma que `login`**, porque termina pidiendo `/me`.
-
-`persistSession` hace lo mismo que en `login`.
-
-```dart
-// Flutter web: al arrancar la app.
-if (Uri.base.queryParameters.containsKey('code')) {
-  final user = await db.completeSocialLogin(Uri.base);
-  print('Hola ${user['name']}');
-}
-```
-
-**El código dura 60 segundos y es de un solo uso.** Es lo primero que hay que mirar cuando el flujo falla en pruebas: recargar la página de retorno lo reutiliza y falla.
-
-**Errores**:
-
-| Excepción | Cuándo |
-| --- | --- |
-| `RobleApiAuthException` | La URL no trae `code`, o `provider` falta o no es `google`/`microsoft`. |
-| `RobleApiHttpException` `400` | `Código inválido o expirado` — reusado o pasados los 60 s. Hay que rehacer el flujo desde `socialLoginUrl`. |
-| `RobleApiFormatException` | El intercambio no devolvió un access token. |
+tal cual de `exchangeSocialCode`.
 
 ### Vidas útiles
 
@@ -636,7 +543,7 @@ await launchUrl(url, mode: LaunchMode.externalApplication);
 final user = await db.exchangeSocialCode(code);
 ```
 
-Frente a `socialLoginUrl`: el código interceptado no sirve sin el verifier, que
+El código interceptado no sirve sin el verifier, que
 nunca sale del proceso —en móvil importa, porque otra app puede registrar el
 mismo esquema de URL—, y `extra` viaja en el cuerpo, así que deja de aparecer en
 los logs de acceso, en los del proxy y en el historial.

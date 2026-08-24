@@ -240,35 +240,34 @@ class _RobleExampleAppState extends State<RobleExampleApp> {
 
   // === LOGIN SOCIAL ===
 
-  /// Consulta qué proveedores están activos en el proyecto. No necesita
-  /// sesión, así que se puede llamar antes de pintar los botones.
+  /// Lista los proveedores activos del proyecto. No necesita sesión, así que
+  /// se puede llamar antes de pintar los botones.
   Future<void> _estadoProveedores() async {
-    for (final proveedor in RobleSocialProvider.values) {
-      try {
-        final cfg = await db.socialConfig(proveedor);
-        _appendLog(cfg.enabled
-            ? '${proveedor.name}: activo (clientId ${cfg.clientId})'
-            : '${proveedor.name}: apagado en este proyecto');
-      } on RobleApiException catch (e) {
-        _appendLog('${proveedor.name}: ${e.message}');
+    try {
+      final proveedores = await db.listProviders();
+      if (proveedores.isEmpty) {
+        _appendLog('No hay proveedores activos en este proyecto.');
+        return;
       }
+      for (final p in proveedores) {
+        _appendLog('${p.name}: activo${p.autoLinkSupported ? '' : ' '
+            '(solo vinculación manual)'}');
+      }
+    } on RobleApiException catch (e) {
+      _appendLog('No se pudieron listar los proveedores: ${e.message}');
     }
   }
 
-  /// Paso 1: navegar a la URL del proveedor. El paquete solo la construye.
+  /// Paso 1: pedir al servidor la URL del proveedor y navegar a ella.
+  ///
+  /// Ahora la arma el servidor, no el paquete: por eso puede llevar `state`,
+  /// `nonce` y el `code_challenge` de PKCE.
   Future<void> _entrarCon(RobleSocialProvider proveedor) async {
     try {
-      final cfg = await db.socialConfig(proveedor);
-      if (!cfg.enabled) {
-        _appendLog('${proveedor.name} no está activo: actívalo en la consola '
-            'de Roble antes de probar.');
-        return;
-      }
-
       // 'redirect' elige el destino de retorno configurado en la consola.
       // Sin destinos dados de alta, Roble responde 400 y no arranca.
-      final url = db.socialLoginUrl(
-        proveedor,
+      final url = await db.startSocialLogin(
+        proveedor.name,
         extra: {'origen': 'ejemplo-flutter'},
         redirect: kSsoRedirect.isEmpty ? null : kSsoRedirect,
       );
@@ -292,12 +291,15 @@ class _RobleExampleAppState extends State<RobleExampleApp> {
   Future<void> _terminarLoginSocial(Uri retorno) async {
     _appendLog('Volviendo de ${retorno.queryParameters['provider']}…');
     try {
-      final user = await db.completeSocialLogin(
-        retorno,
+      final user = await db.exchangeSocialCode(
+        retorno.queryParameters['code']!,
         persistSession: _recordarme,
       );
       _lastEmail = user['email'] as String?;
       _appendLog('Dentro como ${user['name']} (${user['email']})');
+    } on RobleApiConflictException catch (e) {
+      // El proveedor no certifica el correo y ese correo ya tiene cuenta.
+      _appendLog('Cuenta existente: ${e.message}');
     } on RobleApiHttpException catch (e) {
       // Lo habitual al recargar la página de retorno: el código es de un
       // solo uso y dura 60 segundos.

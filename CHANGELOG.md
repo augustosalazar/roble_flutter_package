@@ -1,6 +1,30 @@
 # Changelog
 
-## 1.5.0
+## 2.0.0
+
+### Quitado (incompatible)
+
+Los endpoints antiguos de login social están obsoletos en el servidor y estos
+métodos hablaban solo con ellos. Sus reemplazos hacen lo mismo y algo más.
+
+| Se quitó | Usa |
+| --- | --- |
+| `socialConfig(provider)` | `listProviders()` |
+| `socialLoginUrl(provider)` | `startSocialLogin(provider)` |
+| `completeSocialLogin(uri)` | `exchangeSocialCode(code)` |
+| `RobleSocialConfig` | `RobleProviderInfo` |
+
+`signInWithProvider` **no** se quitó: sigue siendo una sola llamada y ahora va
+por dentro con PKCE. `isSocialCallback` tampoco. Para terminar un login en web:
+
+```dart
+if (db.isSocialCallback(Uri.base)) {
+  await db.exchangeSocialCode(Uri.base.queryParameters['code']!);
+}
+```
+
+Nada del resto del paquete cambió: datos, sesión, registro y recuperación de
+contraseña siguen igual.
 
 ### Añadido
 
