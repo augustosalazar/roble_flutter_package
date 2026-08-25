@@ -569,6 +569,72 @@ cuenta.
 
 ---
 
+## ⚡ Tiempo real
+
+Escucha los cambios de una tabla, o de un solo registro, como los `snapshots()`
+de Firebase. Hace falta sesión iniciada.
+
+### `watchTable`
+
+```dart
+final sub = db.watchTable('products').listen((change) {
+  switch (change.type) {
+    case RobleChangeType.insert: agregar(change.record!);
+    case RobleChangeType.update: reemplazar(change.record!);
+    case RobleChangeType.delete: quitar(change.id!);
+  }
+});
+
+await sub.cancel(); // deja de escuchar y avisa al servidor
+```
+
+`change.record` es la fila después del cambio (`null` al borrar) y
+`change.previous` la de antes (`null` al insertar). `change.id` es el `_id`.
+
+### `watchRecord`
+
+```dart
+db.watchRecord('products', id).listen((change) {
+  if (change.type == RobleChangeType.delete) {
+    cerrarPantalla();
+  } else {
+    mostrar(change.record!);
+  }
+});
+```
+
+### Filtrar y limitar operaciones
+
+Los filtros los evalúa el **servidor**, así que lo que no interesa no llega a
+viajar:
+
+```dart
+db.watchTable(
+  'orders',
+  events: [RobleChangeType.insert],
+  filters: [const RobleFilter.equals('status', 'pending')],
+).listen(...);
+```
+
+Operadores: `equals`, `notEquals`, `greaterThan`, `greaterOrEqual`,
+`lessThan`, `lessOrEqual`, `isIn`.
+
+### Lo que conviene saber
+
+| | |
+| --- | --- |
+| Estado inicial | El stream trae **solo lo que cambie a partir de ahora**. Para la lista completa, lee con `read` y aplica encima lo que llegue. |
+| Sesión | El socket lleva el access token. Cerrar sesión cierra el socket. |
+| Un socket | Todas las suscripciones comparten conexión. El servidor limita cuántas admite por cliente. |
+| Reconexión | La lleva el paquete, releyendo el token, y vuelve a pedir las suscripciones: el servidor no recuerda las de un socket caído. |
+| `previous` en un update | Solo trae valores si la tabla tiene `REPLICA IDENTITY FULL`. |
+
+Los fallos llegan por el `onError` del stream: `RobleApiAuthException` si la
+sesión no vale, `RobleApiTimeoutException` si el servidor no responde, y
+`RobleApiException` con su `code` para cuotas y límites.
+
+---
+
 ## 🗄️ Datos
 
 ### `create`

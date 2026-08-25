@@ -1,5 +1,47 @@
 # Changelog
 
+## 2.1.0
+
+### Añadido
+
+- **`watchTable(tabla)` y `watchRecord(tabla, id)`: cambios en tiempo real.**
+  Devuelven un `Stream<RobleChange>` con cada fila insertada, modificada o
+  borrada, al estilo de los `snapshots()` de Firebase. La suscripción se pide
+  cuando alguien empieza a escuchar y se cancela sola al cerrar el
+  `StreamSubscription`, así que un stream que nadie usa no cuesta nada en el
+  servidor.
+
+  ```dart
+  final sub = db.watchTable('products').listen((change) {
+    switch (change.type) {
+      case RobleChangeType.insert: agregar(change.record!);
+      case RobleChangeType.update: reemplazar(change.record!);
+      case RobleChangeType.delete: quitar(change.id!);
+    }
+  });
+  ```
+
+- **`RobleFilter`**, que el servidor evalúa **antes** de mandar nada: filtrar
+  aquí ahorra el viaje de todo lo que no interesa, que en una tabla movida es
+  casi todo. `watchRecord` es exactamente eso, filtrando por `_id`.
+
+- **`RobleChange`**, con la fila nueva, la anterior, la clave primaria y el
+  momento en que se confirmó la transacción en la base.
+
+### Notas
+
+- Hace falta sesión iniciada: el socket lleva el access token y el servidor
+  comprueba que el proyecto del token sea el del cliente.
+- Un solo socket sirve a todas las suscripciones. El servidor limita cuántas
+  admite por cliente, así que abrir uno por tabla se quedaría corto.
+- Al reconectar se vuelven a pedir las suscripciones, porque el servidor no
+  recuerda las de un socket caído.
+- El stream **no** trae el estado actual de la tabla, solo lo que cambie a
+  partir de ahí. Para pintar la lista completa, lee con `read` y aplica encima
+  lo que llegue.
+- Cerrar sesión cierra el socket.
+- Nueva dependencia: `socket_io_client`.
+
 ## 2.0.0
 
 ### Quitado (incompatible)

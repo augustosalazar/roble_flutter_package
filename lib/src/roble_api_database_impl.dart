@@ -8,6 +8,8 @@ import 'roble_api_config.dart';
 import 'roble_api_exception.dart';
 import 'roble_models.dart';
 import 'roble_pkce.dart';
+import 'roble_realtime.dart';
+import 'roble_realtime_client.dart';
 import 'roble_social_auth.dart';
 import 'roble_social_window.dart';
 import 'roble_storage.dart';
@@ -57,6 +59,9 @@ class RobleApiDataBase {
   /// app: cada plataforma abre el proveedor siempre igual.
   final RobleSocialOpener? socialOpener;
 
+  /// Como se abre el socket de tiempo real. Solo se pasa en pruebas.
+  final RobleSocketFactory? socketFactory;
+
   /// Crea el cliente.
   ///
   /// La sesión se persiste sola en el almacén seguro del sistema; no hace
@@ -72,6 +77,7 @@ class RobleApiDataBase {
     RobleTokenStorage? storage,
     String? ssoRedirect,
     this.socialOpener,
+    this.socketFactory,
   })  : _client = client ?? http.Client(),
         storage = storage ?? RobleSecureStorage(),
         ssoRedirect = _validarRedirect(ssoRedirect, 'ssoRedirect');
@@ -115,6 +121,11 @@ class RobleApiDataBase {
   void _clearTokens() {
     _refreshToken = null;
     _updateAccessToken(null);
+    // El socket lleva el access token de esta sesion en el handshake, asi que
+    // no tiene por que sobrevivirla: sin esto quedaba abierto y recibiendo
+    // cambios despues de cerrar sesion.
+    unawaited(_realtime?.close());
+    _realtime = null;
   }
 
   /// Restaura la sesión y comprueba que siga siendo válida.
@@ -888,6 +899,87 @@ class RobleApiDataBase {
         ));
 
     return _iniciarSesionCon(res, persistSession);
+  }
+
+  // ============================================================
+  // ============= TIEMPO REAL ==================================
+  // ============================================================
+
+  RobleRealtimeClient? _realtime;
+
+  /// Cliente de tiempo real, creado la primera vez que se usa.
+  RobleRealtimeClient get realtime {
+    return _realtime ??= RobleRealtimeClient(
+      // El socket cuelga del host, no de la ruta del contrato: socket.io
+      // negocia por `/socket.io` y el proyecto viaja en el query.
+      origin: Uri.parse(config.realtimeUrl).origin,
+      dbName: config.realtimeUrl.split('/').last,
+      accessToken: () => _accessToken,
+      socketFactory: socketFactory,
+    );
+  }
+
+  /// Escucha los cambios de una tabla entera.
+  ///
+  /// Devuelve un stream que emite un [RobleChange] por cada fila insertada,
+  /// modificada o borrada. La suscripcion se pide al empezar a escuchar y se
+  /// cancela sola al cerrar el `StreamSubscription`.
+  ///
+  /// ```dart
+  /// final sub = db.watchTable('products').listen((change) {
+  ///   switch (change.type) {
+  ///     case RobleChangeType.insert: agregar(change.record!);
+  ///     case RobleChangeType.update: reemplazar(change.record!);
+  ///     case RobleChangeType.delete: quitar(change.id!);
+  ///   }
+  /// });
+  ///
+  /// await sub.cancel(); // deja de escuchar y avisa al servidor
+  /// ```
+  ///
+  /// [events] limita a que operaciones. Por omision, las tres.
+  ///
+  /// [filters] los aplica el servidor antes de mandar nada, asi que filtrar
+  /// aqui ahorra el viaje de todo lo que no interesa.
+  ///
+  /// Hace falta sesion iniciada: el socket lleva el access token y el servidor
+  /// comprueba que el proyecto del token sea este.
+  ///
+  /// El stream **no** trae el estado actual de la tabla, solo lo que cambie a
+  /// partir de ahora. Para pintar la lista completa, lee con [read] y aplica
+  /// encima lo que vaya llegando.
+  Stream<RobleChange> watchTable(
+    String tableName, {
+    List<RobleChangeType>? events,
+    List<RobleFilter> filters = const [],
+  }) {
+    return realtime.watch(tableName, events: events, filters: filters);
+  }
+
+  /// Escucha los cambios de un registro concreto, por su `_id`.
+  ///
+  /// ```dart
+  /// db.watchRecord('products', id).listen((change) {
+  ///   if (change.type == RobleChangeType.delete) {
+  ///     cerrarPantalla();
+  ///   } else {
+  ///     mostrar(change.record!);
+  ///   }
+  /// });
+  /// ```
+  ///
+  /// Es [watchTable] con un filtro por clave primaria, que el servidor evalua
+  /// antes de mandar: el resto de filas de la tabla no llegan siquiera.
+  Stream<RobleChange> watchRecord(
+    String tableName,
+    Object id, {
+    List<RobleChangeType>? events,
+  }) {
+    return realtime.watch(
+      tableName,
+      events: events,
+      filters: [RobleFilter.equals('_id', id)],
+    );
   }
 
   /// Comprueba `extra` contra lo que el servidor va a rechazar.
