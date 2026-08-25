@@ -166,6 +166,7 @@ void main() {
                 'name': 'google',
                 'displayName': 'Google',
                 'autoLinkSupported': true,
+                'clientId': 'web-client-id',
               },
               {
                 'name': 'github',
@@ -178,6 +179,11 @@ void main() {
       final proveedores = await clienteCon(guion).listProviders();
 
       expect(guion.peticiones.first.url.path, '/auth/$contractId/auth/providers');
+      // Con el clientId aqui, la app puede configurar su SDK nativo sin llevar
+      // una segunda copia que se desincronice.
+      expect(proveedores.first.clientId, 'web-client-id');
+      // Un servidor anterior no lo manda; eso no debe reventar el parseo.
+      expect(proveedores.last.clientId, isNull);
       // Un proveedor que el paquete no conoce se devuelve igual: por eso deja
       // de hacer falta publicar una versión para añadir uno.
       expect(proveedores.map((p) => p.name), ['google', 'github']);

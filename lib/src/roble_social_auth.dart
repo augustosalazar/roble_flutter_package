@@ -39,8 +39,9 @@ enum RobleSocialProvider { google, microsoft }
 /// `GET /{contrato}/auth/providers`.
 ///
 /// Una sola llamada devuelve todos los proveedores activos, así que añadir uno
-/// nuevo en el servidor no obliga a tocar la app. No expone el `clientId`, que
-/// la app nunca necesitó.
+/// nuevo en el servidor no obliga a tocar la app. Trae también el [clientId],
+/// con lo que la consola de Roble queda como el único sitio donde se configura
+/// un proveedor, incluso para el inicio de sesión nativo.
 class RobleProviderInfo {
   /// Identificador estable: `google`, `microsoft`, `github`…
   final String name;
@@ -55,10 +56,24 @@ class RobleProviderInfo {
   /// solo. Conviene avisarlo en la interfaz antes, no después.
   final bool autoLinkSupported;
 
+  /// Client ID con el que el proyecto tiene configurado al proveedor.
+  ///
+  /// Es lo que necesita un SDK nativo como `serverClientId`: el token que pida
+  /// se emite para esta audiencia, y es la que Roble comprueba al validarlo.
+  /// Tomarlo de aqui evita llevar una segunda copia dentro de la app, que se
+  /// desincroniza y falla con un `401` que parece un problema del token.
+  ///
+  /// No es un secreto: viaja a la vista en cualquier URL de autorizacion. El
+  /// `clientSecret` no sale nunca del servidor.
+  ///
+  /// `null` contra un servidor anterior a que el endpoint lo devolviera.
+  final String? clientId;
+
   const RobleProviderInfo({
     required this.name,
     required this.displayName,
     required this.autoLinkSupported,
+    this.clientId,
   });
 
   factory RobleProviderInfo.fromJson(Map<dynamic, dynamic> json) {
@@ -66,10 +81,12 @@ class RobleProviderInfo {
       name: json['name'] as String? ?? '',
       displayName: json['displayName'] as String? ?? '',
       autoLinkSupported: json['autoLinkSupported'] == true,
+      clientId: json['clientId'] as String?,
     );
   }
 
   @override
   String toString() => 'RobleProviderInfo(name: $name, '
-      'displayName: $displayName, autoLinkSupported: $autoLinkSupported)';
+      'displayName: $displayName, autoLinkSupported: $autoLinkSupported, '
+      'clientId: $clientId)';
 }
