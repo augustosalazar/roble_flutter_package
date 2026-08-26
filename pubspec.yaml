@@ -17,6 +17,12 @@ dependencies:
   flutter:
     sdk: flutter
   socket_io_client: ^3.1.6
+  # Login social nativo. Estan aqui y no inyectados en cada app porque el
+  # pegamento era identico en todas: ~200 lineas por app que nadie deberia
+  # reescribir. El paquete ya traia flutter_secure_storage, que tambien es un
+  # plugin nativo, asi que esto no cambia la naturaleza de la dependencia.
+  google_sign_in: ^7.2.0
+  flutter_web_auth_2: ^5.1.0
 
 dev_dependencies:
   flutter_test:

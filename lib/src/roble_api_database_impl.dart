@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
@@ -8,6 +9,7 @@ import 'roble_api_config.dart';
 import 'roble_api_exception.dart';
 import 'roble_models.dart';
 import 'roble_pkce.dart';
+import 'roble_google_signin.dart';
 import 'roble_json_db.dart';
 import 'roble_realtime.dart';
 import 'roble_realtime_client.dart';
@@ -60,6 +62,20 @@ class RobleApiDataBase {
   /// app: cada plataforma abre el proveedor siempre igual.
   final RobleSocialOpener? socialOpener;
 
+  /// Client ID de iOS de Google. En Android se deja `null`: alli lo resuelve el
+  /// SDK a partir de la firma del paquete. Es por plataforma, asi que Roble no
+  /// lo guarda y es lo unico de Google que sigue en manos de la app.
+  final String? googleIosClientId;
+
+  final RobleIdTokenSource? _idTokenSource;
+  RobleIdTokenSource? _googleCache;
+
+  /// Origen del `id_token` nativo. Se crea la primera vez que se usa: en web
+  /// nunca llega a tocar el plugin.
+  RobleIdTokenSource get _google =>
+      _idTokenSource ??
+      (_googleCache ??= RobleGoogleSignIn(iosClientId: googleIosClientId));
+
   /// Como se abre el socket de tiempo real. Solo se pasa en pruebas.
   final RobleSocketFactory? socketFactory;
 
@@ -79,7 +95,10 @@ class RobleApiDataBase {
     String? ssoRedirect,
     this.socialOpener,
     this.socketFactory,
-  })  : _client = client ?? http.Client(),
+    this.googleIosClientId,
+    RobleIdTokenSource? idTokenSource,
+  })  : _idTokenSource = idTokenSource,
+        _client = client ?? http.Client(),
         storage = storage ?? RobleSecureStorage(),
         ssoRedirect = _validarRedirect(ssoRedirect, 'ssoRedirect');
 
@@ -669,6 +688,97 @@ class RobleApiDataBase {
 
     return exchangeSocialCode(_codigoDe(callback),
         persistSession: persistSession);
+  }
+
+  /// Inicia sesion con Google por el mejor camino que soporte la plataforma.
+  ///
+  /// En movil usa el SDK nativo: sale un selector de cuentas, sin navegador,
+  /// sin esquema de URL propio y sin retorno que enrutar. En web, o donde el
+  /// SDK no exista, cae al flujo de ventana de [signInWithProvider]. Devuelve
+  /// el perfil, igual que [login].
+  ///
+  /// ```dart
+  /// final perfil = await db.signInWithGoogle();
+  /// ```
+  ///
+  /// El Client ID sale de la consola de Roble, no del build de la app: es la
+  /// audiencia para la que Google emite el token y la que el servidor comprueba
+  /// despues, asi que teniendolo de un solo sitio no pueden discrepar. Solo el
+  /// de iOS se pasa aqui, con `googleIosClientId`, porque es por plataforma.
+  ///
+  /// Lanza [RobleApiAuthException] si se cancela el selector.
+  Future<Map<String, dynamic>> signInWithGoogle({
+    bool persistSession = true,
+    Duration timeout = const Duration(minutes: 5),
+  }) async {
+    if (_google.isSupported) {
+      final serverClientId = await providerClientId('google');
+
+      // Sin clientId, o Google no esta configurado en el proyecto, o el
+      // servidor es anterior a que el endpoint lo devolviera. El flujo de
+      // navegador no lo necesita, asi que se intenta por ahi.
+      if (serverClientId != null) {
+        return _signInWithGoogleNatively(
+          serverClientId,
+          persistSession: persistSession,
+        );
+      }
+    }
+
+    return signInWithProvider(
+      RobleSocialProvider.google,
+      persistSession: persistSession,
+      timeout: timeout,
+    );
+  }
+
+  Future<Map<String, dynamic>> _signInWithGoogleNatively(
+    String serverClientId, {
+    required bool persistSession,
+  }) async {
+    final nonce = newNonce();
+    final idToken = await _google.idToken(
+      serverClientId: serverClientId,
+      nonce: nonce,
+    );
+
+    if (idToken == null) {
+      // Cancelado. Caer al flujo de navegador aqui abriria una ventana que la
+      // persona acaba de rechazar.
+      throw const RobleApiAuthException(
+          'Inicio de sesión con Google cancelado.');
+    }
+
+    return signInWithIdToken(
+      provider: 'google',
+      idToken: idToken,
+      nonce: nonce,
+      persistSession: persistSession,
+    );
+  }
+
+  /// Client ID que el proyecto tiene configurado para [provider], o `null` si
+  /// ese proveedor no esta configurado.
+  ///
+  /// Evita que la app lleve una segunda copia del valor: la consola de Roble es
+  /// el unico sitio donde se define.
+  Future<String?> providerClientId(String provider) async {
+    for (final p in await listProviders()) {
+      if (p.name == provider) return p.clientId;
+    }
+    return null;
+  }
+
+  /// Valor de un solo uso que ata un `id_token` a esta peticion.
+  ///
+  /// Viaja al proveedor, vuelve dentro del token y Roble comprueba que sea el
+  /// mismo, que es lo que impide reutilizar un token capturado. [signInWithGoogle]
+  /// ya lo hace por su cuenta; esto es para quien llame a [signInWithIdToken]
+  /// directamente.
+  static String newNonce() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+    return base64Url.encode(bytes).replaceAll('=', '');
   }
 
   /// `true` si [url] es un retorno del login social.
