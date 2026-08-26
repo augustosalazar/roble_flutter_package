@@ -1,6 +1,7 @@
 @Timeout(Duration(minutes: 3))
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -23,6 +24,14 @@ void main() {
   final table = Platform.environment['ROBLE_TABLE'];
   final baseUrl = Platform.environment['ROBLE_BASE_URL'] ??
       'https://roble-api.test-openlab.uninorte.edu.co';
+
+  // La tabla la elige quien corre esto, asi que no puede darse por hecho que
+  // tenga una columna `name`. [campo] es la que se escribe y se comprueba;
+  // [fijos] cubre las demas que sean obligatorias.
+  final campo = Platform.environment['ROBLE_TEXT_FIELD'] ?? 'name';
+  final fijos = jsonDecode(Platform.environment['ROBLE_EXTRA_JSON'] ?? '{}')
+      as Map<String, dynamic>;
+  Map<String, dynamic> cuerpo(String valor) => {campo: valor, ...fijos};
 
   if (contract == null || table == null) {
     test('faltan datos', () {
@@ -91,7 +100,7 @@ void main() {
     // suscriptor, asi que hay que darle un momento antes de escribir.
     await Future<void>.delayed(const Duration(seconds: 3));
 
-    final fila = await db.create(table, {'name': 'e2e-insert'});
+    final fila = await db.create(table, cuerpo('e2e-insert'));
     creados.add(fila['_id'].toString());
 
     await _esperarA(() => recibidos.isNotEmpty);
@@ -99,7 +108,7 @@ void main() {
 
     expect(recibidos.first.type, RobleChangeType.insert);
     expect(recibidos.first.table, table);
-    expect(recibidos.first.record?['name'], 'e2e-insert');
+    expect(recibidos.first.record?[campo], 'e2e-insert');
   });
 
   test('UPDATE y DELETE llegan con sus tipos', () async {
@@ -107,12 +116,12 @@ void main() {
     final sub = db.watchTable(table).listen(recibidos.add);
     await Future<void>.delayed(const Duration(seconds: 3));
 
-    final fila = await db.create(table, {'name': 'e2e-ciclo'});
+    final fila = await db.create(table, cuerpo('e2e-ciclo'));
     final id = fila['_id'].toString();
     creados.add(id);
 
     await _esperarA(() => recibidos.any((c) => c.type == RobleChangeType.insert));
-    await db.update(table, id, {'name': 'e2e-ciclo-2'});
+    await db.update(table, id, cuerpo('e2e-ciclo-2'));
     await _esperarA(() => recibidos.any((c) => c.type == RobleChangeType.update));
     await db.delete(table, id);
     await _esperarA(() => recibidos.any((c) => c.type == RobleChangeType.delete));
@@ -120,20 +129,20 @@ void main() {
 
     final actualizado =
         recibidos.firstWhere((c) => c.type == RobleChangeType.update);
-    expect(actualizado.record?['name'], 'e2e-ciclo-2');
+    expect(actualizado.record?[campo], 'e2e-ciclo-2');
   });
 
   test('watchRecord solo trae el registro pedido', () async {
-    final mio = await db.create(table, {'name': 'e2e-vigilado'});
-    final otro = await db.create(table, {'name': 'e2e-ruido'});
+    final mio = await db.create(table, cuerpo('e2e-vigilado'));
+    final otro = await db.create(table, cuerpo('e2e-ruido'));
     creados.addAll([mio['_id'].toString(), otro['_id'].toString()]);
 
     final recibidos = <RobleChange>[];
     final sub = db.watchRecord(table, mio['_id']).listen(recibidos.add);
     await Future<void>.delayed(const Duration(seconds: 3));
 
-    await db.update(table, otro['_id'], {'name': 'e2e-ruido-2'});
-    await db.update(table, mio['_id'], {'name': 'e2e-vigilado-2'});
+    await db.update(table, otro['_id'], cuerpo('e2e-ruido-2'));
+    await db.update(table, mio['_id'], cuerpo('e2e-vigilado-2'));
 
     await _esperarA(() => recibidos.isNotEmpty);
     // Un momento mas, por si el filtro no filtrara y llegara tambien el otro.
@@ -152,7 +161,7 @@ void main() {
     expect(
       recibidos.any((c) =>
           c.type == RobleChangeType.update &&
-          c.record?['name'] == 'e2e-vigilado-2'),
+          c.record?[campo] == 'e2e-vigilado-2'),
       isTrue,
     );
   });
@@ -228,7 +237,7 @@ void main() {
     final tabla = <RobleChange>[];
     final registro = <RobleChange>[];
 
-    final fila = await db.create(table, {'name': 'e2e-doble'});
+    final fila = await db.create(table, cuerpo('e2e-doble'));
     final id = fila['_id'].toString();
     creados.add(id);
 
@@ -236,7 +245,7 @@ void main() {
     final subRegistro = db.watchRecord(table, id).listen(registro.add);
     await Future<void>.delayed(const Duration(seconds: 3));
 
-    await db.update(table, id, {'name': 'e2e-doble-2'});
+    await db.update(table, id, cuerpo('e2e-doble-2'));
 
     await _esperarA(() => tabla.isNotEmpty && registro.isNotEmpty);
     await subTabla.cancel();
@@ -247,7 +256,7 @@ void main() {
     // eventos: el slot puede entregar tambien el alta previa.
     bool trajoElUpdate(List<RobleChange> l) => l.any((c) =>
         c.type == RobleChangeType.update &&
-        c.record?['name'] == 'e2e-doble-2');
+        c.record?[campo] == 'e2e-doble-2');
 
     expect(trajoElUpdate(tabla), isTrue, reason: 'falto en watchTable');
     expect(trajoElUpdate(registro), isTrue, reason: 'falto en watchRecord');
