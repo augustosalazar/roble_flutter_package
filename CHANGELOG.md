@@ -1,5 +1,44 @@
 # Changelog
 
+## 2.2.0
+
+### Añadido
+
+- **Base de datos JSON (`db.json`).** Un árbol por proyecto, al estilo de
+  Firebase Realtime Database: `collections`, `read` (con `shallow`), `write`,
+  `update`, `push`, `remove` y `watch`. No hay esquema que declarar —la
+  estructura nace al escribir— y el árbol vive fuera del esquema del proyecto,
+  así que no aparece entre sus tablas. Es lo que corresponde a un chat, un
+  tablero o una partida; una tabla es para lo que sí merece columnas.
+- **`RobleChange.path`**: la ruta que cambió dentro del árbol. Los cambios de
+  una tabla SQL la traen vacía, porque ahí la fila la identifica `primaryKey`.
+- **`signInWithGoogle()`**: SDK nativo donde lo haya, ventana de navegador
+  donde no, y el canje del `id_token` por medio. El Client ID sale de la
+  consola, no del build de la app. Antes cada app reescribía estas ~200 líneas.
+- **`robleNativeOpener(esquema)`**: la parte de navegador para móvil, que
+  también estaba copiada en cada app.
+- **`providerClientId(nombre)`** y **`RobleApiDataBase.newNonce()`**, sueltos,
+  para quien llame a `signInWithIdToken` por su cuenta.
+
+### Cambiado
+
+- El paquete depende ahora de `google_sign_in` y `flutter_web_auth_2`. Se
+  inyectaban para no arrastrar plugins nativos, pero `flutter_secure_storage`
+  ya era uno, así que esa línea estaba cruzada. Los puntos de inyección siguen
+  ahí.
+
+### Corregido
+
+- **La suscripción de tiempo real no se enviaba nunca en web.** El id de
+  petición usaba `1 << 32`, que en web vale 0, y `nextInt(0)` lanza antes de
+  emitir el `subscribe`.
+- **Los filtros del servidor coincidían con todo.** El cliente los envolvía en
+  `simple` y el servidor los lee planos, así que el operador llegaba vacío y
+  todo pasaba el filtro.
+- **`isSupported` de Google tumbaba el botón sin plugin registrado.** Solo
+  atrapaba `UnimplementedError`; sin plugin salta `MissingPluginException`, y
+  ahora degrada al flujo de navegador en vez de reventar.
+
 ## 2.1.0
 
 ### Añadido
