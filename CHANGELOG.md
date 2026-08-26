@@ -28,6 +28,12 @@
 - **`RobleChange`**, con la fila nueva, la anterior, la clave primaria y el
   momento en que se confirmó la transacción en la base.
 
+- **CRUD de las tablas en tiempo real**, aparte del CRUD de filas:
+  `realtimePolicies()`, `realtimePolicy(tabla)`, `setRealtimePolicy(...)` y
+  `disableRealtime(tabla)`. Una política dice si la tabla emite, qué
+  operaciones y quién puede escucharlas. Una tabla **sin** política emite igual:
+  la política sirve para restringir o apagar.
+
 ### Notas
 
 - Hace falta sesión iniciada: el socket lleva el access token y el servidor
@@ -36,9 +42,11 @@
   admite por cliente, así que abrir uno por tabla se quedaría corto.
 - Al reconectar se vuelven a pedir las suscripciones, porque el servidor no
   recuerda las de un socket caído.
-- El stream **no** trae el estado actual de la tabla, solo lo que cambie a
-  partir de ahí. Para pintar la lista completa, lee con `read` y aplica encima
-  lo que llegue.
+- El stream no trae el estado actual de la tabla. Para pintar la lista
+  completa, lee con `read` y aplica encima lo que llegue.
+- Puede entregar un cambio ocurrido justo **antes** de suscribirse: el slot de
+  replicación guarda lo que aún no se ha consumido. Comprobado contra un
+  servidor real.
 - Cerrar sesión cierra el socket.
 - Nueva dependencia: `socket_io_client`.
 

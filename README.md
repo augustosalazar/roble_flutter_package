@@ -623,7 +623,8 @@ Operadores: `equals`, `notEquals`, `greaterThan`, `greaterOrEqual`,
 
 | | |
 | --- | --- |
-| Estado inicial | El stream trae **solo lo que cambie a partir de ahora**. Para la lista completa, lee con `read` y aplica encima lo que llegue. |
+| Estado inicial | El stream no trae el contenido de la tabla. Para la lista completa, lee con `read` y aplica encima lo que llegue. |
+| Cambios previos | Puede entregar algo ocurrido **justo antes** de suscribirse: el slot de replicación guarda lo que aún no se ha consumido. Usa `change.id` para no duplicar. |
 | Sesión | El socket lleva el access token. Cerrar sesión cierra el socket. |
 | Un socket | Todas las suscripciones comparten conexión. El servidor limita cuántas admite por cliente. |
 | Reconexión | La lleva el paquete, releyendo el token, y vuelve a pedir las suscripciones: el servidor no recuerda las de un socket caído. |
@@ -632,6 +633,44 @@ Operadores: `equals`, `notEquals`, `greaterThan`, `greaterOrEqual`,
 Los fallos llegan por el `onError` del stream: `RobleApiAuthException` si la
 sesión no vale, `RobleApiTimeoutException` si el servidor no responde, y
 `RobleApiException` con su `code` para cuotas y límites.
+
+### Qué tablas emiten: las políticas
+
+Aparte del CRUD de **filas**, hay un CRUD de **tablas en tiempo real**. Una
+política dice si la tabla emite, qué operaciones y quién puede escucharlas.
+
+```dart
+// Listar y leer
+final todas = await db.realtimePolicies();
+final una = await db.realtimePolicy('orders');   // null si no tiene
+
+// Crear o reemplazar
+await db.setRealtimePolicy(const RobleTablePolicy(
+  table: 'orders',
+  enabled: true,
+  events: [RobleChangeType.insert, RobleChangeType.update],
+  access: RobleRealtimeAccess.authenticated,
+));
+
+// Dejarla muda
+await db.disableRealtime('orders');
+```
+
+**Una tabla sin política emite igual**, a cualquiera con sesión. La política
+sirve para restringir o apagar, no para habilitar. Y `disableRealtime` no borra
+la fila, la marca deshabilitada: suscribirse a una tabla deshabilitada devuelve
+`REALTIME_TABLE_DISABLED` por el `onError` del stream.
+
+`setRealtimePolicy` **reemplaza**, no combina: lo que no indiques vuelve a su
+valor por omisión. Para cambiar un campo suelto, lee primero.
+
+| `access` | Quién escucha |
+| --- | --- |
+| `public` | Cualquiera, con sesión o sin ella |
+| `authenticated` | Cualquier usuario con sesión |
+| `ownerOnly` | Solo el dueño de la fila |
+| `roleBased` | Según el rol, con lo definido en `rowPolicy` |
+| `disabled` | Nadie |
 
 ---
 

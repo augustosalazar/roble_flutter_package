@@ -44,14 +44,23 @@ void main() {
       storage: storage,
     );
 
-    // Usuario de usar y tirar, con una contrasena generada aqui: no hace falta
-    // que nadie comparta la suya.
-    final marca = DateTime.now().millisecondsSinceEpoch;
-    email = 'e2e-$marca@example.com';
-    final password = 'E2e!${marca}aA';
+    // Con ROBLE_EMAIL y ROBLE_PASSWORD usa esa cuenta; si no, crea una de usar
+    // y tirar. Hace falta la cuenta cuando el proyecto exige rol `editor` para
+    // escribir: el rol `user` por omision puede insertar y leer, pero no
+    // actualizar ni borrar, asi que el ciclo completo daria 403.
+    final existente = Platform.environment['ROBLE_EMAIL'];
+    final clave = Platform.environment['ROBLE_PASSWORD'];
 
-    await db.register(email: email, password: password, name: 'Prueba E2E');
-    await db.login(email: email, password: password);
+    if (existente != null && clave != null) {
+      email = existente;
+      await db.login(email: email, password: clave);
+    } else {
+      final marca = DateTime.now().millisecondsSinceEpoch;
+      email = 'e2e-$marca@example.com';
+      final password = 'E2e!${marca}aA';
+      await db.register(email: email, password: password, name: 'Prueba E2E');
+      await db.login(email: email, password: password);
+    }
     expect(db.isLoggedIn, isTrue, reason: 'no se pudo iniciar sesion');
   });
 
@@ -63,10 +72,12 @@ void main() {
         // Ya borrada por la propia prueba.
       }
     }
-    try {
-      await db.deleteAccount();
-    } catch (_) {
-      // Deja el usuario si el proyecto no permite borrarlo; es de usar y tirar.
+    if (Platform.environment['ROBLE_EMAIL'] == null) {
+      try {
+        await db.deleteAccount();
+      } catch (_) {
+        // Deja el usuario si el proyecto no permite borrarlo; es de usar y tirar.
+      }
     }
   });
 
@@ -129,10 +140,88 @@ void main() {
     await Future<void>.delayed(const Duration(seconds: 2));
     await sub.cancel();
 
-    // El filtro lo aplica el servidor: la fila que no interesa no deberia
-    // haber viajado siquiera.
-    expect(recibidos, hasLength(1));
-    expect(recibidos.single.record?['name'], 'e2e-vigilado-2');
+    // El filtro lo aplica el servidor: ni una sola de las que llegan puede ser
+    // de otra fila. No se cuenta cuantas son, porque el slot de replicacion
+    // guarda lo ocurrido justo antes de suscribirse y puede entregar tambien
+    // el alta de esta misma fila.
+    expect(
+      recibidos.map((c) => c.id).toSet(),
+      {mio['_id'].toString()},
+      reason: 'llego un cambio de una fila que el filtro debia descartar',
+    );
+    expect(
+      recibidos.any((c) =>
+          c.type == RobleChangeType.update &&
+          c.record?['name'] == 'e2e-vigilado-2'),
+      isTrue,
+    );
+  });
+
+  test('CRUD de la politica de tiempo real de la tabla', () async {
+    // Las politicas son otra cosa que las filas: dicen si la tabla emite, que
+    // operaciones y quien puede escucharlas.
+    final creada = await db.setRealtimePolicy(RobleTablePolicy(
+      table: table,
+      enabled: true,
+      events: const [RobleChangeType.insert, RobleChangeType.update],
+      access: RobleRealtimeAccess.authenticated,
+      includeOldRecord: false,
+    ));
+    expect(creada.table, table);
+    expect(creada.enabled, isTrue);
+    expect(creada.events,
+        [RobleChangeType.insert, RobleChangeType.update]);
+
+    final leida = await db.realtimePolicy(table);
+    expect(leida, isNotNull);
+    expect(leida!.includeOldRecord, isFalse);
+
+    expect(
+      (await db.realtimePolicies()).map((p) => p.table),
+      contains(table),
+    );
+
+    final cambiada = await db.setRealtimePolicy(RobleTablePolicy(
+      table: table,
+      enabled: true,
+      events: RobleChangeType.values,
+      access: RobleRealtimeAccess.public,
+    ));
+    expect(cambiada.access, RobleRealtimeAccess.public);
+    expect(cambiada.events, hasLength(3));
+
+    await db.disableRealtime(table);
+    // El servidor la deja deshabilitada en vez de borrarla, asi que sigue
+    // estando, muda.
+    expect((await db.realtimePolicy(table))?.enabled, isFalse);
+  });
+
+  test('una tabla deshabilitada rechaza la suscripcion', () async {
+    await db.setRealtimePolicy(RobleTablePolicy(
+      table: table,
+      enabled: false,
+      access: RobleRealtimeAccess.authenticated,
+    ));
+
+    final errores = <Object>[];
+    final recibidos = <RobleChange>[];
+    final sub = db.watchTable(table).listen(recibidos.add, onError: errores.add);
+
+    await _esperarA(() => errores.isNotEmpty);
+    await sub.cancel();
+
+    // No es que se quede muda: el servidor rechaza el `subscribe` con
+    // REALTIME_TABLE_DISABLED, y llega por el `exception` que este cliente
+    // ahora escucha. Sin eso el stream se quedaria abierto sin decir nada.
+    expect(errores.single.toString(), contains('not enabled'));
+    expect(recibidos, isEmpty);
+
+    // Se deja como estaba para no afectar a quien use el proyecto.
+    await db.setRealtimePolicy(RobleTablePolicy(
+      table: table,
+      enabled: true,
+      access: RobleRealtimeAccess.authenticated,
+    ));
   });
 
   test('dos suscripciones a la vez no se mezclan', () async {
@@ -154,9 +243,16 @@ void main() {
     await subRegistro.cancel();
 
     // Comparten un solo socket, asi que separarlas por subscriptionId es lo
-    // unico que impide que una reciba lo de la otra.
-    expect(tabla.single.record?['name'], 'e2e-doble-2');
-    expect(registro.single.record?['name'], 'e2e-doble-2');
+    // unico que impide que una reciba lo de la otra. No se cuentan los
+    // eventos: el slot puede entregar tambien el alta previa.
+    bool trajoElUpdate(List<RobleChange> l) => l.any((c) =>
+        c.type == RobleChangeType.update &&
+        c.record?['name'] == 'e2e-doble-2');
+
+    expect(trajoElUpdate(tabla), isTrue, reason: 'falto en watchTable');
+    expect(trajoElUpdate(registro), isTrue, reason: 'falto en watchRecord');
+    // La suscripcion por registro no puede traer nada de otra fila.
+    expect(registro.map((c) => c.id).toSet(), {id});
   });
 }
 

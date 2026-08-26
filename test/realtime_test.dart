@@ -1,6 +1,28 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:roble/roble.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
+
+/// Cliente HTTP con respuestas guionizadas, para las politicas.
+class Guion {
+  final List<http.Request> peticiones = [];
+  final List<http.Response Function(http.Request)> _respuestas;
+
+  Guion(this._respuestas);
+
+  MockClient get cliente => MockClient((req) async {
+        peticiones.add(req);
+        return _respuestas.removeAt(0)(req);
+      });
+}
+
+http.Response json200(Object body) =>
+    http.Response(jsonEncode(body), 200, headers: {
+      'content-type': 'application/json',
+    });
 
 /// Socket de mentira: apunta lo que se emitio y deja al test entregar lo que
 /// entregaria el servidor.
@@ -182,10 +204,10 @@ void main() {
       ]).listen((_) {});
       await Future<void>.delayed(Duration.zero);
 
+      // Plano: envuelto en `simple` el servidor no ve el operador y su
+      // `default` deja pasar todo, que es peor que rechazar.
       expect(socket.emitidos.single.data['filters'], [
-        {
-          'simple': {'column': '_id', 'operator': 'eq', 'value': 'r1'}
-        }
+        {'column': '_id', 'operator': 'eq', 'value': 'r1'}
       ]);
     });
 
@@ -417,6 +439,105 @@ void main() {
     });
   });
 
+  group('politicas de tiempo real', () {
+    late Guion guion;
+    RobleApiDataBase cliente(Guion g) => RobleApiDataBase(
+          config: RobleApiConfig.fromContract(
+            baseUrl: 'https://roble-api.test',
+            contractId: 'proyecto_ab12',
+          ),
+          client: g.cliente,
+          storage: RobleMemoryStorage(),
+        );
+
+    test('lista las politicas del proyecto', () async {
+      guion = Guion([(_) => json200([_politica])]);
+
+      final politicas = await cliente(guion).realtimePolicies();
+
+      // La configuracion cuelga de /realtime/config, no de /realtime/{contrato}.
+      expect(guion.peticiones.first.url.path,
+          '/realtime/config/proyecto_ab12/policies');
+      expect(politicas.single.table, 'orders');
+      expect(politicas.single.access, RobleRealtimeAccess.ownerOnly);
+      expect(politicas.single.events,
+          [RobleChangeType.insert, RobleChangeType.update]);
+      expect(politicas.single.includeOldRecord, isFalse);
+    });
+
+    test('lee la de una tabla', () async {
+      guion = Guion([(_) => json200(_politica)]);
+
+      final politica = await cliente(guion).realtimePolicy('orders');
+
+      expect(guion.peticiones.first.url.path,
+          '/realtime/config/proyecto_ab12/policies/public/orders');
+      expect(politica!.allowedFilterColumns, ['status']);
+      expect(politica.rowPolicy, {'column': 'user_id'});
+    });
+
+    test('una tabla sin politica devuelve null, no un error', () async {
+      guion = Guion([(_) => http.Response('', 200)]);
+
+      // Sin politica la tabla emite igual: no tenerla no es un fallo.
+      expect(await cliente(guion).realtimePolicy('orders'), isNull);
+    });
+
+    test('guarda la politica con la tabla en la ruta', () async {
+      guion = Guion([(_) => json200(_politica)]);
+
+      await cliente(guion).setRealtimePolicy(const RobleTablePolicy(
+        table: 'orders',
+        enabled: true,
+        events: [RobleChangeType.insert],
+        access: RobleRealtimeAccess.roleBased,
+      ));
+
+      final peticion = guion.peticiones.first;
+      expect(peticion.method, 'PUT');
+      expect(peticion.url.path,
+          '/realtime/config/proyecto_ab12/policies/public/orders');
+      final cuerpo = jsonDecode(peticion.body) as Map;
+      expect(cuerpo['allowedEvents'], ['INSERT']);
+      // El servidor escribe los niveles con guion bajo.
+      expect(cuerpo['accessLevel'], 'role_based');
+      expect(cuerpo.containsKey('tableName'), isFalse);
+    });
+
+    test('deshabilitar usa DELETE', () async {
+      guion = Guion([(_) => json200({'success': true})]);
+
+      await cliente(guion).disableRealtime('orders');
+
+      expect(guion.peticiones.first.method, 'DELETE');
+      expect(guion.peticiones.first.url.path,
+          '/realtime/config/proyecto_ab12/policies/public/orders');
+    });
+
+    test('manda el bearer: la configuracion no es publica', () async {
+      guion = Guion([(_) => json200([])]);
+      final almacen = RobleMemoryStorage();
+      await almacen.setItem(
+        'roble.session.proyecto_ab12',
+        jsonEncode({'accessToken': 'at-1', 'refreshToken': 'rt-1'}),
+      );
+      final db = RobleApiDataBase(
+        config: RobleApiConfig.fromContract(
+          baseUrl: 'https://roble-api.test',
+          contractId: 'proyecto_ab12',
+        ),
+        client: guion.cliente,
+        storage: almacen,
+      );
+      await db.restoreSession(verify: false);
+
+      await db.realtimePolicies();
+
+      expect(guion.peticiones.first.headers.containsKey('Authorization'),
+          isTrue);
+    });
+  });
+
   group('token al reconectar', () {
     test('rehace el socket con el token vigente', () async {
       var token = 'viejo';
@@ -457,3 +578,20 @@ void main() {
     });
   });
 }
+
+// ---------------------------------------------------------------------------
+// CRUD de las politicas de tiempo real (la configuracion, no los datos).
+// ---------------------------------------------------------------------------
+
+const _politica = {
+  'id': 'p1',
+  'dbName': 'proyecto_ab12',
+  'schemaName': 'public',
+  'tableName': 'orders',
+  'enabled': true,
+  'allowedEvents': ['INSERT', 'UPDATE'],
+  'accessLevel': 'owner_only',
+  'includeOldRecord': false,
+  'allowedFilterColumns': ['status'],
+  'rowPolicy': {'column': 'user_id'},
+};

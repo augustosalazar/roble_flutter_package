@@ -919,6 +919,94 @@ class RobleApiDataBase {
     );
   }
 
+  /// `{host}/realtime/config/{contrato}`, de donde cuelgan las politicas.
+  ///
+  /// No es `realtimeUrl`: ese apunta a `/realtime/{contrato}` y la
+  /// configuracion vive un nivel antes, bajo `/realtime/config`.
+  String get _policyBaseUrl {
+    final uri = Uri.parse(config.realtimeUrl);
+    return '${uri.origin}/realtime/config/${config.realtimeUrl.split('/').last}';
+  }
+
+  /// Politicas de tiempo real del proyecto, una por tabla configurada.
+  ///
+  /// Una tabla que no aparezca aqui no esta sin tiempo real: sin politica emite
+  /// a cualquiera con sesion. La politica sirve para restringir o apagar.
+  Future<List<RobleTablePolicy>> realtimePolicies() async {
+    final res = await _makeRequest(
+      'GET',
+      'policies',
+      baseUrlOverride: _policyBaseUrl,
+    );
+
+    if (res is List) {
+      return res
+          .whereType<Map>()
+          .map(RobleTablePolicy.fromJson)
+          .toList(growable: false);
+    }
+    throw const RobleApiFormatException(
+        'Respuesta inesperada al listar las politicas de tiempo real.');
+  }
+
+  /// La politica de una tabla, o `null` si no tiene ninguna.
+  Future<RobleTablePolicy?> realtimePolicy(
+    String tableName, {
+    String schema = 'public',
+  }) async {
+    final res = await _makeRequest(
+      'GET',
+      'policies/$schema/$tableName',
+      baseUrlOverride: _policyBaseUrl,
+    );
+
+    if (res == null || (res is String && res.isEmpty)) return null;
+    if (res is Map) return RobleTablePolicy.fromJson(res);
+    throw const RobleApiFormatException(
+        'Respuesta inesperada al leer la politica de tiempo real.');
+  }
+
+  /// Crea o reemplaza la politica de una tabla.
+  ///
+  /// ```dart
+  /// await db.setRealtimePolicy(const RobleTablePolicy(
+  ///   table: 'orders',
+  ///   enabled: true,
+  ///   events: [RobleChangeType.insert, RobleChangeType.update],
+  ///   access: RobleRealtimeAccess.authenticated,
+  /// ));
+  /// ```
+  ///
+  /// Reemplaza, no combina: lo que no se indique vuelve a su valor por
+  /// omision. Para cambiar un campo suelto, lee con [realtimePolicy] primero.
+  Future<RobleTablePolicy> setRealtimePolicy(RobleTablePolicy policy) async {
+    final res = await _makeRequest(
+      'PUT',
+      'policies/${policy.schema}/${policy.table}',
+      baseUrlOverride: _policyBaseUrl,
+      body: policy.toJson(),
+    );
+
+    if (res is Map) return RobleTablePolicy.fromJson(res);
+    throw const RobleApiFormatException(
+        'Respuesta inesperada al guardar la politica de tiempo real.');
+  }
+
+  /// Deja una tabla muda.
+  ///
+  /// El servidor no borra la fila, la marca deshabilitada, asi que volver a
+  /// habilitarla con [setRealtimePolicy] es un cambio y no un alta.
+  Future<void> disableRealtime(
+    String tableName, {
+    String schema = 'public',
+  }) async {
+    await _makeRequest(
+      'DELETE',
+      'policies/$schema/$tableName',
+      baseUrlOverride: _policyBaseUrl,
+    );
+  }
+
   /// Escucha los cambios de una tabla entera.
   ///
   /// Devuelve un stream que emite un [RobleChange] por cada fila insertada,
