@@ -349,6 +349,14 @@ class RobleRealtimeClient {
     }
   }
 
+  /// Identificador de la peticion de suscripcion.
+  ///
+  /// El limite es un literal y no `1 << 32` a proposito: en web los enteros de
+  /// Dart son numeros de JavaScript y ese desplazamiento no da 2^32, asi que
+  /// `nextInt` lanzaba `RangeError` justo antes de emitir el `subscribe`. El
+  /// socket conectaba, no se suscribia nadie, y el stream se quedaba abierto
+  /// sin recibir nada. En la VM el mismo codigo funcionaba, que es por lo que
+  /// las pruebas de extremo a extremo no lo vieron.
   String _requestId() =>
-      '${DateTime.now().microsecondsSinceEpoch}-${_random.nextInt(1 << 32)}';
+      '${DateTime.now().microsecondsSinceEpoch}-${_random.nextInt(0xFFFFFFFF)}';
 }

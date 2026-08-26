@@ -439,6 +439,28 @@ void main() {
     });
   });
 
+  group('identificador de peticion', () {
+    test('se genera sin reventar y es distinto cada vez', () async {
+      final guion = Guion([
+        for (var i = 0; i < 5; i++) (_) => json200({'url': 'https://p.test/go'}),
+      ]);
+      final client = construir();
+      final vistos = <String>{};
+
+      for (var i = 0; i < 5; i++) {
+        client.watch('t$i').listen((_) {});
+        await Future<void>.delayed(Duration.zero);
+        vistos.add(socket.emitidos.last.data['requestId'] as String);
+      }
+
+      // En web el limite `1 << 32` hacia que nextInt lanzara RangeError justo
+      // antes de emitir el subscribe: el socket conectaba y no se suscribia
+      // nadie.
+      expect(vistos, hasLength(5));
+      expect(guion.peticiones, isEmpty);
+    });
+  });
+
   group('politicas de tiempo real', () {
     late Guion guion;
     RobleApiDataBase cliente(Guion g) => RobleApiDataBase(
