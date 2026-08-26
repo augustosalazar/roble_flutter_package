@@ -49,11 +49,15 @@ class RobleGoogleSignIn implements RobleIdTokenSource {
 
     try {
       return GoogleSignIn.instance.supportsAuthenticate();
-    } on UnimplementedError {
-      // Linux y Windows no tienen implementacion del plugin, y ahi
-      // supportsAuthenticate lanza en vez de devolver false. Sin este catch el
-      // boton reventaria en escritorio en lugar de caer al flujo de navegador,
-      // que si funciona.
+    } catch (_) {
+      // Es una pregunta sobre la plataforma, y la unica respuesta segura
+      // cuando no se puede contestar es «no»: quien llama cae entonces al
+      // flujo de navegador, que funciona en todas partes.
+      //
+      // Linux y Windows no tienen implementacion y lanzan UnimplementedError.
+      // Sin plugin registrado —un `flutter test`, o un binario donde nadie
+      // llamo a ensureInitialized— salta MissingPluginException. Antes solo se
+      // atrapaba el primero, y el segundo tumbaba el boton en vez de degradar.
       return false;
     }
   }

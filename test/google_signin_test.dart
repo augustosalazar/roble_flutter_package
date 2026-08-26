@@ -231,6 +231,14 @@ void main() {
     });
   });
 
+  group('sin plugin registrado', () {
+    test('no dice que soporta lo que no puede hacer', () {
+      // Es lo que pasa en un `flutter test` de cualquier app, y antes saltaba
+      // MissingPluginException en vez de degradar al flujo de navegador.
+      expect(RobleGoogleSignIn().isSupported, isFalse);
+    });
+  });
+
   group('nonce', () {
     test('no se repite', () {
       final vistos = {for (var i = 0; i < 50; i++) RobleApiDataBase.newNonce()};
