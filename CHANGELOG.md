@@ -1,31 +1,57 @@
 # Changelog
 
-## 2.2.0
+## 1.4.0
+
+Todo lo que sigue es **aditivo** respecto a 1.3.0: no desaparece ningún método
+ni cambia lo que devuelve ninguno. Actualizar no debería obligarte a tocar nada.
 
 ### Añadido
 
-- **Base de datos JSON (`db.json`).** Un árbol por proyecto, al estilo de
-  Firebase Realtime Database: `collections`, `read` (con `shallow`), `write`,
-  `update`, `push`, `remove` y `watch`. No hay esquema que declarar —la
-  estructura nace al escribir— y el árbol vive fuera del esquema del proyecto,
-  así que no aparece entre sus tablas. Es lo que corresponde a un chat, un
-  tablero o una partida; una tabla es para lo que sí merece columnas.
-- **`RobleChange.path`**: la ruta que cambió dentro del árbol. Los cambios de
-  una tabla SQL la traen vacía, porque ahí la fila la identifica `primaryKey`.
-- **`signInWithGoogle()`**: SDK nativo donde lo haya, ventana de navegador
-  donde no, y el canje del `id_token` por medio. El Client ID sale de la
-  consola, no del build de la app. Antes cada app reescribía estas ~200 líneas.
-- **`robleNativeOpener(esquema)`**: la parte de navegador para móvil, que
-  también estaba copiada en cada app.
-- **`providerClientId(nombre)`** y **`RobleApiDataBase.newNonce()`**, sueltos,
-  para quien llame a `signInWithIdToken` por su cuenta.
+#### Inicio de sesión social
+
+- **`signInWithGoogle()`**: una sola llamada. Usa el SDK nativo donde lo haya y
+  la ventana de navegador donde no; el paquete elige solo.
+- **`signInWithProvider(provider)`**: el flujo de ventana, con PKCE por dentro.
+- **`signInWithIdToken(...)`**: canjea un token que ya obtuvo un SDK nativo.
+- **`listProviders()`** y **`providerClientId(nombre)`**: los proveedores
+  configurados, para pintar solo los botones que funcionan y para que la app no
+  lleve una segunda copia del Client ID.
+- **`startSocialLogin()`** + **`exchangeSocialCode()`** e **`isSocialCallback()`**,
+  para quien quiera conducir el flujo a mano.
+- **`robleNativeOpener(esquema)`**: abre el navegador del sistema en móvil.
+- **`RobleApiConflictException`**: el `409` de cuando el correo ya tiene cuenta
+  con otro proveedor.
+- **`RoblePkce`** y **`RobleApiDataBase.newNonce()`**, sueltos.
+
+#### Tiempo real
+
+- **`watchTable(tabla)`** y **`watchRecord(tabla, id)`**: un `Stream<RobleChange>`
+  con cada fila insertada, modificada o borrada. La suscripción se pide cuando
+  alguien empieza a escuchar y se cancela sola al cerrar el `StreamSubscription`.
+- Filtros y selección de operaciones que **evalúa el servidor**, así que lo que
+  no interesa ni viaja.
+- **Políticas**: `realtimePolicies()`, `realtimePolicy()`, `setRealtimePolicy()`
+  y `disableRealtime()`, para decidir qué tablas emiten.
+
+#### Base de datos JSON
+
+- **`db.json`**: un árbol por proyecto, al estilo de Firebase Realtime Database,
+  con `collections`, `read` (con `shallow`), `write`, `update`, `push`, `remove`
+  y `watch`. No hay esquema que declarar —la estructura nace al escribir— y el
+  árbol vive fuera del esquema del proyecto, así que no aparece entre sus tablas.
+- **`RobleChange.path`**: la ruta que cambió dentro del árbol. En una tabla SQL
+  llega vacía, porque ahí la fila la identifica `primaryKey`.
+
+#### Datos
+
+- **`executeQueryByName(nombre)`**: ejecuta una consulta guardada por su nombre.
+  El nombre se lee en la consola y sobrevive a recrear la consulta; el UUID no.
 
 ### Cambiado
 
 - El paquete depende ahora de `google_sign_in` y `flutter_web_auth_2`. Se
-  inyectaban para no arrastrar plugins nativos, pero `flutter_secure_storage`
-  ya era uno, así que esa línea estaba cruzada. Los puntos de inyección siguen
-  ahí.
+  inyectaban para no arrastrar plugins nativos, pero `flutter_secure_storage` ya
+  era uno. Los puntos de inyección siguen ahí para quien los necesite.
 
 ### Corregido
 
@@ -35,185 +61,9 @@
 - **Los filtros del servidor coincidían con todo.** El cliente los envolvía en
   `simple` y el servidor los lee planos, así que el operador llegaba vacío y
   todo pasaba el filtro.
-- **`isSupported` de Google tumbaba el botón sin plugin registrado.** Solo
+- **El botón de Google moría sin plugin registrado.** La comprobación solo
   atrapaba `UnimplementedError`; sin plugin salta `MissingPluginException`, y
   ahora degrada al flujo de navegador en vez de reventar.
-
-## 2.1.0
-
-### Añadido
-
-- **`watchTable(tabla)` y `watchRecord(tabla, id)`: cambios en tiempo real.**
-  Devuelven un `Stream<RobleChange>` con cada fila insertada, modificada o
-  borrada, al estilo de los `snapshots()` de Firebase. La suscripción se pide
-  cuando alguien empieza a escuchar y se cancela sola al cerrar el
-  `StreamSubscription`, así que un stream que nadie usa no cuesta nada en el
-  servidor.
-
-  ```dart
-  final sub = db.watchTable('products').listen((change) {
-    switch (change.type) {
-      case RobleChangeType.insert: agregar(change.record!);
-      case RobleChangeType.update: reemplazar(change.record!);
-      case RobleChangeType.delete: quitar(change.id!);
-    }
-  });
-  ```
-
-- **`RobleFilter`**, que el servidor evalúa **antes** de mandar nada: filtrar
-  aquí ahorra el viaje de todo lo que no interesa, que en una tabla movida es
-  casi todo. `watchRecord` es exactamente eso, filtrando por `_id`.
-
-- **`RobleChange`**, con la fila nueva, la anterior, la clave primaria y el
-  momento en que se confirmó la transacción en la base.
-
-- **CRUD de las tablas en tiempo real**, aparte del CRUD de filas:
-  `realtimePolicies()`, `realtimePolicy(tabla)`, `setRealtimePolicy(...)` y
-  `disableRealtime(tabla)`. Una política dice si la tabla emite, qué
-  operaciones y quién puede escucharlas. Una tabla **sin** política emite igual:
-  la política sirve para restringir o apagar.
-
-### Notas
-
-- Hace falta sesión iniciada: el socket lleva el access token y el servidor
-  comprueba que el proyecto del token sea el del cliente.
-- Un solo socket sirve a todas las suscripciones. El servidor limita cuántas
-  admite por cliente, así que abrir uno por tabla se quedaría corto.
-- Al reconectar se vuelven a pedir las suscripciones, porque el servidor no
-  recuerda las de un socket caído.
-- El stream no trae el estado actual de la tabla. Para pintar la lista
-  completa, lee con `read` y aplica encima lo que llegue.
-- Puede entregar un cambio ocurrido justo **antes** de suscribirse: el slot de
-  replicación guarda lo que aún no se ha consumido. Comprobado contra un
-  servidor real.
-- Cerrar sesión cierra el socket.
-- Nueva dependencia: `socket_io_client`.
-
-## 2.0.0
-
-### Quitado (incompatible)
-
-Los endpoints antiguos de login social están obsoletos en el servidor y estos
-métodos hablaban solo con ellos. Sus reemplazos hacen lo mismo y algo más.
-
-| Se quitó | Usa |
-| --- | --- |
-| `socialConfig(provider)` | `listProviders()` |
-| `socialLoginUrl(provider)` | `startSocialLogin(provider)` |
-| `completeSocialLogin(uri)` | `exchangeSocialCode(code)` |
-| `RobleSocialConfig` | `RobleProviderInfo` |
-
-`signInWithProvider` **no** se quitó: sigue siendo una sola llamada y ahora va
-por dentro con PKCE. `isSocialCallback` tampoco. Para terminar un login en web:
-
-```dart
-if (db.isSocialCallback(Uri.base)) {
-  await db.exchangeSocialCode(Uri.base.queryParameters['code']!);
-}
-```
-
-Nada del resto del paquete cambió: datos, sesión, registro y recuperación de
-contraseña siguen igual.
-
-### Añadido
-
-- **`signInWithIdToken(provider:, idToken:, nonce:)`: login con el SDK nativo.**
-  El equivalente de `signInWithIdToken` de Supabase, y el camino que mejor
-  encaja en una app: `google_sign_in` devuelve el `idToken`, se manda y ya hay
-  sesión. Sin navegador, sin ventana emergente, sin esquema de URL personalizado
-  y sin retorno que enrutar. Solo para proveedores OIDC —Google y Microsoft—;
-  GitHub es OAuth2 y no emite `id_token`.
-
-- **`listProviders()`: los proveedores activos, en una llamada.** Reemplaza a
-  `socialConfig`, que había que llamar una vez por proveedor y solo conocía los
-  dos del enum. Devuelve también `autoLinkSupported`, que dice si ese proveedor
-  puede vincularse solo con una cuenta que ya existe. Añadir un proveedor en el
-  servidor deja de obligar a publicar una versión del paquete.
-
-- **`startSocialLogin(provider)` + `exchangeSocialCode(code)`: el flujo de
-  navegador con PKCE.** Frente a `socialLoginUrl`:
-  - Añade PKCE (RFC 7636), así que un código interceptado no sirve sin el
-    verifier, que nunca sale del proceso. En móvil importa, porque otra app
-    puede registrar el mismo esquema de URL y quedarse con el retorno.
-  - `extra` viaja en el cuerpo y no en la URL, así que deja de aparecer en los
-    logs de acceso, en los del proxy y en el historial.
-  - Acepta cualquier proveedor por nombre, no solo los del enum.
-
-- **`RobleApiConflictException`.** El `409` que devuelve Roble cuando el
-  proveedor no certifica el correo y ese correo ya tiene cuenta —el caso de
-  Microsoft, porque la mayoría de registros de Entra de un solo tenant no emiten
-  `email_verified`—. No se arregla reintentando: hay que entrar con el método
-  que ya se tiene y vincular el proveedor desde los ajustes. Extiende
-  `RobleApiHttpException`, así que quien ya capturaba el `409` por código sigue
-  igual.
-
-- **`RoblePkce`**, por si se quiere manejar el par a mano.
-
-### Notas
-
-- Nada se ha quitado ni ha cambiado de forma. `socialConfig`, `socialLoginUrl`,
-  `completeSocialLogin` y `signInWithProvider` siguen funcionando exactamente
-  igual, contra los mismos endpoints.
-- Los métodos nuevos hablan con los endpoints genéricos del servidor, que están
-  detrás de `AUTH_V2_PROVIDERS`. Con la bandera apagada responden `400`.
-- Nueva dependencia: `crypto`, para el SHA-256 de PKCE.
-
-## 1.4.0
-
-### Añadido
-
-- **`signInWithProvider(provider)`: login social en una sola llamada.** Abre el
-  proveedor en una ventana emergente, espera el retorno y devuelve el perfil,
-  igual que `login`. Como la app no se descarga, la respuesta llega por `await`
-  y no por la URL de arranque: desaparece la necesidad de leer `Uri.base`, de
-  limpiar la barra de direcciones y de enseñarle al enrutador qué hacer con
-  `?code=`. Requiere un fragmento de tres líneas en `web/index.html`, que está
-  en el README. En web trae la ventana emergente puesta; en móvil y escritorio
-  le pasas un `RobleSocialOpener` —al crear el cliente con `socialOpener`, o por
-  llamada— que abra el proveedor con el plugin que uses. El paquete no elige por
-  ti para no arrastrar código nativo a quien no usa login social.
-
-- **Inicio de sesión con Google y Microsoft.** En Roble el login social es
-  también registro: un correo nuevo crea un usuario ya verificado y uno
-  existente enlaza la identidad del proveedor, así que no hay un
-  `signUpWithGoogle` aparte.
-
-  - `socialConfig(provider)` consulta si el proveedor está activo en el
-    proyecto, sin necesitar sesión. Sirve para no pintar un botón que
-    respondería `403`.
-  - `socialLoginUrl(provider, {extra, redirect})` construye la URL de
-    arranque. No hace ninguna petición: hay que navegar a ella. El paquete
-    deliberadamente no abre el navegador, para no arrastrar `url_launcher` a
-    todo el que use la librería sin tocar el login social. `redirect` elige,
-    por nombre, a cuál de los destinos de retorno configurados en la consola
-    vuelve el usuario; omitirlo usa el llamado `default`. Es lo que permite
-    que la app web, la de móvil y el entorno de desarrollo compartan proyecto
-    y vuelva cada una a su sitio. **Un proyecto sin destinos configurados no
-    puede arrancar el flujo**: Roble ya no deduce el retorno de la cabecera
-    `Origin`.
-  - `completeSocialLogin(callbackUrl, {persistSession})` canjea el código de
-    la URL de retorno, guarda la sesión y devuelve el perfil — la misma forma
-    que `login`.
-
-  Con ellos llegan `RobleSocialProvider` y `RobleSocialConfig`.
-
-- **`extra` se valida antes de salir a la red.** Como viaja en la URL del
-  navegador, un `extra` inválido se descubriría a mitad del flujo de OAuth,
-  cuando ya es tarde para dar un mensaje útil. Ahora `socialLoginUrl` lanza
-  `ArgumentError` en el acto si supera los 4 KB serializado, si no es
-  convertible a JSON, o si usa una clave que Roble reserva —`role`,
-  `isAdmin`, `userId`, `permissions`, `__proto__`…— **a cualquier nivel de
-  anidamiento**, indicando la ruta exacta de la clave culpable.
-
-- **`executeQueryByName(name, {params})`** ejecuta una consulta guardada por
-  su nombre en vez de por su UUID
-  (`POST /saved-queries/by-name/{name}/execute`). Es lo preferible en código
-  que se mantiene: el nombre sobrevive a borrar y recrear la consulta, el UUID
-  no. El nombre se escapa solo, así que admite espacios y acentos.
-
-- Primeras pruebas del paquete (`test/`), sobre el `MockClient` de `http`: 36
-  casos que cubren el flujo social completo, la validación de `extra`, la
-  persistencia de la sesión y las consultas guardadas.
 
 ## 1.3.0
 
