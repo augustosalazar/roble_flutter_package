@@ -32,6 +32,7 @@ class RobleChange {
     required this.eventId,
     this.record,
     this.previous,
+    this.path = const [],
   });
 
   final RobleChangeType type;
@@ -54,6 +55,12 @@ class RobleChange {
   /// La fila antes del cambio. `null` en una insercion, y en un update solo
   /// trae valores si la tabla tiene REPLICA IDENTITY FULL.
   final Map<String, dynamic>? previous;
+
+  /// Ruta dentro del arbol JSON que cambio, empezando por la coleccion.
+  ///
+  /// Solo la traen los cambios de la base de datos JSON. En una tabla SQL
+  /// llega vacia, porque ahi lo que identifica la fila es [primaryKey].
+  final List<String> path;
 
   /// El `_id` de la fila, que es como se identifica un registro en Roble.
   String? get id =>
@@ -82,6 +89,8 @@ class RobleChange {
       previous: json['old'] == null
           ? null
           : Map<String, dynamic>.from(json['old'] as Map),
+      path: (json['path'] as List?)?.map((s) => s.toString()).toList() ??
+          const [],
     );
   }
 

@@ -8,6 +8,7 @@ import 'roble_api_config.dart';
 import 'roble_api_exception.dart';
 import 'roble_models.dart';
 import 'roble_pkce.dart';
+import 'roble_json_db.dart';
 import 'roble_realtime.dart';
 import 'roble_realtime_client.dart';
 import 'roble_social_auth.dart';
@@ -126,6 +127,7 @@ class RobleApiDataBase {
     // cambios despues de cerrar sesion.
     unawaited(_realtime?.close());
     _realtime = null;
+    _json = null;
   }
 
   /// Restaura la sesión y comprueba que siga siendo válida.
@@ -235,8 +237,10 @@ class RobleApiDataBase {
 
   Uri _buildUri(String baseUrl, String endpoint,
       [Map<String, String>? queryParams]) {
-    return Uri.parse('$baseUrl/$endpoint')
-        .replace(queryParameters: queryParams);
+    // Un endpoint vacio apunta a la base misma: pegarle la barra dejaria una
+    // final, y no toda ruta la tolera.
+    final url = endpoint.isEmpty ? baseUrl : '$baseUrl/$endpoint';
+    return Uri.parse(url).replace(queryParameters: queryParams);
   }
 
   Map<String, String> _buildHeaders({bool skipAuth = false}) {
@@ -916,6 +920,32 @@ class RobleApiDataBase {
       dbName: config.realtimeUrl.split('/').last,
       accessToken: () => _accessToken,
       socketFactory: socketFactory,
+    );
+  }
+
+  RobleJsonDb? _json;
+
+  /// Base de datos JSON del proyecto: un arbol sin esquema, al estilo de
+  /// Firebase Realtime Database.
+  ///
+  /// Es la alternativa a [watchTable] cuando los datos no merecen una tabla:
+  /// aqui la estructura se crea al escribir y el arbol no vive en el esquema
+  /// del proyecto.
+  ///
+  /// ```dart
+  /// await db.json.push('mensajes', {'texto': 'hola'});
+  /// db.json.watch('mensajes').listen(pintar);
+  /// ```
+  RobleJsonDb get json {
+    return _json ??= RobleJsonDb(
+      realtime: realtime,
+      request: (method, path, {body, queryParams}) => _makeRequest(
+        method,
+        path,
+        body: body,
+        queryParams: queryParams,
+        baseUrlOverride: config.realtimeUrl,
+      ),
     );
   }
 
