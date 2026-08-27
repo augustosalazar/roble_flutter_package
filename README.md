@@ -70,6 +70,34 @@ if (db.isLoggedIn) print('Hay alguien dentro');
 final perfil = await db.currentUser();
 ```
 
+### Qué devuelve el login
+
+`login()`, `signInWithGoogle()` y cualquier otra forma de entrar devuelven
+**el mismo mapa**: el perfil de la persona.
+
+```dart
+{
+  'id': 'us-3f2a…',            // fila del perfil
+  'userId': '9c1e…',           // el usuario. Este es el que referencian tus tablas
+  'email': 'ana@correo.com',
+  'name': 'Ana García',
+  'role': 'admin',             // null si no tiene rol asignado
+  'extra': {'programa': 'Sistemas'},
+  'createdAt': '2026-08-27T12:00:00.000Z',
+  'updatedAt': null,
+}
+```
+
+Dos avisos:
+
+- **`id` y `userId` no son lo mismo.** `userId` es el del usuario, el que
+  guardas en tus tablas para saber de quién es cada fila. `id` es el de la
+  fila del perfil.
+- **`role` puede ser `null`**, si nadie le asignó rol. No es un error.
+
+`currentUser()` devuelve exactamente esto mismo, y es lo que usas después de
+`restoreSession()` para saber quién entró.
+
 ### Que la sesión sobreviva a cerrar la app
 
 Por omisión la sesión se guarda en el almacenamiento seguro del teléfono. Al
@@ -332,24 +360,84 @@ Los números que más vas a ver:
 
 ## Referencia rápida
 
-**Sesión** · `isLoggedIn` · `restoreSession()` · `logout()`
+Todos los métodos son asíncronos salvo `isLoggedIn` e `isSocialCallback`.
 
-**Cuentas** · `register()` · `registerWithVerification()` · `verifyEmail()` ·
-`resendCode()` · `login()` · `currentUser()` · `forgotPassword()` ·
-`resetPassword()` · `deleteAccount()`
+### Sesión
 
-**Login social** · `signInWithGoogle()` · `signInWithProvider()` ·
-`signInWithIdToken()` · `listProviders()` · `providerClientId()` ·
-`startSocialLogin()` · `exchangeSocialCode()` · `isSocialCallback()`
+| Método | Devuelve |
+|---|---|
+| `isLoggedIn` | `bool` — si hay sesión en memoria |
+| `restoreSession()` | `bool` — `true` si la sesión guardada sigue viva |
+| `logout()` | nada |
 
-**Tablas** · `create()` · `createMany()` · `read()` · `getById()` · `update()` ·
-`delete()` · `publicRead()` · `executeQuery()` · `executeQueryByName()`
+### Cuentas
 
-**Árbol JSON** · `json.collections()` · `json.read()` · `json.write()` ·
-`json.update()` · `json.push()` · `json.remove()` · `json.watch()`
+| Método | Devuelve |
+|---|---|
+| `register()` | el usuario creado, tal como lo mandó el servidor |
+| `registerWithVerification()` | confirmación de que el correo salió |
+| `verifyEmail()` | confirmación |
+| `resendCode()` | confirmación |
+| `login()` | **el perfil** (arriba) |
+| `currentUser()` | **el perfil** |
+| `forgotPassword()` | confirmación de que el correo salió |
+| `resetPassword()` | confirmación |
+| `deleteAccount()` | nada |
 
-**Tiempo real** · `watchTable()` · `watchRecord()` · `realtimePolicies()` ·
-`realtimePolicy()` · `setRealtimePolicy()` · `disableRealtime()`
+### Login social
+
+| Método | Devuelve |
+|---|---|
+| `signInWithGoogle()` | **el perfil** |
+| `signInWithProvider()` | **el perfil** |
+| `signInWithIdToken()` | **el perfil** |
+| `exchangeSocialCode()` | **el perfil** |
+| `listProviders()` | `List<RobleProviderInfo>` — `name`, `displayName`, `clientId`, `autoLinkSupported` |
+| `providerClientId()` | `String?` — `null` si ese proveedor no está configurado |
+| `startSocialLogin()` | `Uri` — a dónde mandar a la persona |
+| `isSocialCallback()` | `bool` |
+| `RobleApiDataBase.newNonce()` | `String` |
+
+### Tablas
+
+| Método | Devuelve |
+|---|---|
+| `create()` | el registro creado, **con su `_id`** |
+| `createMany()` | `RobleInsertResult` — `inserted` y `skipped` |
+| `read()` | `List<Map>` — vacía si no hay nada, nunca `null` |
+| `getById()` | `Map?` — **`null` si no existe** |
+| `update()` | el registro ya cambiado |
+| `delete()` | confirmación del borrado |
+| `publicRead()` | `List<Map>` — sin necesidad de sesión |
+| `executeQuery()` | `RobleQueryResult` — `rows`, `rowCount`, `fields` |
+| `executeQueryByName()` | `RobleQueryResult` |
+
+### Árbol JSON
+
+| Método | Devuelve |
+|---|---|
+| `json.collections()` | `List<String>` — los nombres |
+| `json.read()` | lo que haya en esa ruta, o `null` si no existe |
+| `json.write()` | nada |
+| `json.update()` | nada |
+| `json.push()` | `String` — **la clave que generó el servidor** |
+| `json.remove()` | nada |
+| `json.watch()` | `Stream<RobleChange>` |
+
+### Tiempo real
+
+| Método | Devuelve |
+|---|---|
+| `watchTable()` | `Stream<RobleChange>` |
+| `watchRecord()` | `Stream<RobleChange>` |
+| `realtimePolicies()` | `List<RobleTablePolicy>` |
+| `realtimePolicy()` | `RobleTablePolicy?` — `null` si esa tabla no tiene política |
+| `setRealtimePolicy()` | la política ya guardada |
+| `disableRealtime()` | nada |
+
+Un `RobleChange` trae `type` (`insert`, `update`, `delete`), `table`,
+`record` (la fila después del cambio, `null` al borrar), `previous`,
+`primaryKey`, `id`, `commitTimestamp` y `path` (solo en el árbol JSON).
 
 ---
 

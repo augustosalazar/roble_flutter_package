@@ -44,6 +44,9 @@ ni cambia lo que devuelve ninguno. Actualizar no debería obligarte a tocar nada
 
 #### Datos
 
+- **El perfil trae `role`.** Llega en cualquier forma de entrar —contraseña o
+  social— porque todas devuelven el mismo perfil. Requiere `auth-service`
+  v1.7.8. Es `null` si a esa persona no se le asignó rol.
 - **`executeQueryByName(nombre)`**: ejecuta una consulta guardada por su nombre.
   El nombre se lee en la consola y sobrevive a recrear la consulta; el UUID no.
 
