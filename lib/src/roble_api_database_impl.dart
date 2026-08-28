@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'roble_api_config.dart';
 import 'roble_api_exception.dart';
+import 'roble_file_storage.dart';
 import 'roble_models.dart';
 import 'roble_pkce.dart';
 import 'roble_google_signin.dart';
@@ -1055,6 +1056,30 @@ class RobleApiDataBase {
         body: body,
         queryParams: queryParams,
         baseUrlOverride: config.realtimeUrl,
+      ),
+    );
+  }
+
+  RobleFileStorage? _files;
+
+  /// Archivos del proyecto: sube y descarga contra el bucket S3-compatible
+  /// del proyecto (el gestionado por Roble por defecto, o el propio si se
+  /// configuro uno en la consola).
+  ///
+  /// Los bytes nunca pasan por el servidor de Roble: [RobleFileStorage.upload]
+  /// pide una URL firmada y sube directo al bucket.
+  ///
+  /// ```dart
+  /// final fileId = await db.files.upload(fileName: 'foto.jpg', data: bytes);
+  /// final url = await db.files.getDownloadUrl(fileId);
+  /// ```
+  RobleFileStorage get files {
+    return _files ??= RobleFileStorage(
+      request: (method, path, {body, queryParams}) => _makeRequest(
+        method,
+        path,
+        body: body,
+        queryParams: queryParams,
       ),
     );
   }
