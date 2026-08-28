@@ -1176,6 +1176,12 @@ class RobleApiDataBase {
   /// El stream **no** trae el estado actual de la tabla, solo lo que cambie a
   /// partir de ahora. Para pintar la lista completa, lee con [read] y aplica
   /// encima lo que vaya llegando.
+  @Deprecated(
+    'El tiempo real de Roble escucha colecciones del arbol JSON, no tablas '
+    'SQL. El servidor rechaza estas suscripciones con '
+    'REALTIME_UNKNOWN_COLLECTION, asi que ya no entregan nada: usa '
+    'db.json.watch sobre la coleccion correspondiente. Se retira en 2.0.0.',
+  )
   Stream<RobleChange> watchTable(
     String tableName, {
     List<RobleChangeType>? events,
@@ -1198,6 +1204,11 @@ class RobleApiDataBase {
   ///
   /// Es [watchTable] con un filtro por clave primaria, que el servidor evalua
   /// antes de mandar: el resto de filas de la tabla no llegan siquiera.
+  @Deprecated(
+    'Va sobre watchTable, asi que hereda su final: el servidor solo emite '
+    'colecciones del arbol JSON. Usa db.json.watch sobre la ruta del nodo que '
+    'te interese. Se retira en 2.0.0.',
+  )
   Stream<RobleChange> watchRecord(
     String tableName,
     Object id, {

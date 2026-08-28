@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.5.0
+
+### Cambiado
+
+- **El tiempo real escucha colecciones del árbol JSON, no tablas SQL.** El
+  servidor dejó de replicar tablas: emitía a cualquiera con sesión sin pasar
+  por los permisos por rol, y compartía espacio de nombres con las
+  colecciones, así que una tabla homónima se entregaba a quien escuchaba la
+  colección. Requiere `realtime` v0.10.1.
+
+  El cambio es del servidor, así que **quedarse en 1.4.0 no lo evita**: quien
+  no actualice tendrá `watchTable` fallando igual, pero sin el aviso del
+  analizador.
+
+### Obsoleto
+
+- **`watchTable` y `watchRecord`.** El servidor rechaza esas suscripciones con
+  `REALTIME_UNKNOWN_COLLECTION` y ya no entregan nada. Usa `db.json.watch`
+  sobre la colección correspondiente. Se retiran en 2.0.0.
+
+  No se borran ahora: dejarlas hace que el error del servidor llegue por el
+  stream explicando qué usar, mientras que quitarlas rompería la compilación
+  sin decir por dónde seguir.
+
 ## 1.4.0
 
 Todo lo que sigue es **aditivo** respecto a 1.3.0: no desaparece ningún método
