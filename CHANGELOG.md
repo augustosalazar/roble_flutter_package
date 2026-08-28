@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.1
+
+### Documentación
+
+- El aviso de obsolescencia de `watchTable` y `watchRecord` decía «se retira en
+  2.0.0». Este repositorio ya usó y descartó esa numeración —el commit
+  `fffd13c`, «Release 1.4.0, not 2.2.0», la bajó de vuelta—, y quedaba un tag
+  `v2.0.0` colgando de trabajo que nunca se publicó. Citar ese número invitaba
+  a confundir una cosa con la otra, así que ahora dice «una versión mayor
+  futura». El tag se borró.
+
 ## 1.5.0
 
 ### Cambiado
@@ -18,7 +29,7 @@
 
 - **`watchTable` y `watchRecord`.** El servidor rechaza esas suscripciones con
   `REALTIME_UNKNOWN_COLLECTION` y ya no entregan nada. Usa `db.json.watch`
-  sobre la colección correspondiente. Se retiran en 2.0.0.
+  sobre la colección correspondiente. Se retiran en una versión mayor futura.
 
   No se borran ahora: dejarlas hace que el error del servidor llegue por el
   stream explicando qué usar, mientras que quitarlas rompería la compilación

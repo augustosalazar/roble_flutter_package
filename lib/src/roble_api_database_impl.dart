@@ -1180,7 +1180,8 @@ class RobleApiDataBase {
     'El tiempo real de Roble escucha colecciones del arbol JSON, no tablas '
     'SQL. El servidor rechaza estas suscripciones con '
     'REALTIME_UNKNOWN_COLLECTION, asi que ya no entregan nada: usa '
-    'db.json.watch sobre la coleccion correspondiente. Se retira en 2.0.0.',
+    'db.json.watch sobre la coleccion correspondiente. Se retira en una '
+    'version mayor futura.',
   )
   Stream<RobleChange> watchTable(
     String tableName, {
@@ -1207,7 +1208,7 @@ class RobleApiDataBase {
   @Deprecated(
     'Va sobre watchTable, asi que hereda su final: el servidor solo emite '
     'colecciones del arbol JSON. Usa db.json.watch sobre la ruta del nodo que '
-    'te interese. Se retira en 2.0.0.',
+    'te interese. Se retira en una version mayor futura.',
   )
   Stream<RobleChange> watchRecord(
     String tableName,
