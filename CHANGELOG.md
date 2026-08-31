@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.6.0
+
+### Añadido
+
+- **`db.files`: archivos en el bucket del proyecto.** `upload`, `list`,
+  `getDownloadUrl`, `download` y `remove`.
+
+  Los bytes **no pasan por Roble**: el paquete pide una URL firmada y sube o
+  baja directo contra el bucket S3 del proyecto. Por eso no hay límite de
+  tamaño impuesto por el paquete —el que manda es el del bucket— y el archivo
+  no consume el ancho de banda del servidor.
+
+  ```dart
+  final fileId = await db.files.upload(fileName: 'foto.png', data: bytes);
+  final bytes = await db.files.download(fileId);
+  ```
+
+  Si el `PUT` al bucket falla, el archivo queda registrado como `PENDING` y no
+  aparece en `list`: no hay fichas apuntando a algo que no llegó.
+
+  El proyecto necesita un bucket conectado desde la consola, en
+  **Configuración → Almacenamiento**. Sin él, el servidor responde diciendo
+  eso mismo y dónde hacerlo.
+
+  Requiere `app-roble` v1.9.1 o superior y `db-service-roble` v1.8.0 o
+  superior.
+
 ## 1.5.1
 
 ### Documentación
