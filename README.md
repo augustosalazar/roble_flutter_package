@@ -166,6 +166,40 @@ RobleApiDataBase(
 );
 ```
 
+### Un destino de retorno por entorno
+
+`ssoRedirect` no es una URL: es el **nombre** de un destino registrado en la
+consola. La URL vive allí, así que puedes tener varios y elegir cuál usa cada
+build.
+
+Registra uno por entorno en vez de irle cambiando la URL al mismo:
+
+| Nombre en la consola | URL |
+|---|---|
+| `mi-app-web-dev` | `http://localhost:5001` |
+| `mi-app-web` | `https://mi-dominio` |
+| `mi-app-movil` | `com.miempresa.miapp://sso-done` |
+
+Así desarrollo y producción no se pelean por el mismo sitio, y puedes probar el
+flujo real en local sin tocar lo que usan los demás. Publicar deja de ser un
+cambio en la consola: es otro valor en la configuración de ese build.
+
+> **En local, el puerto forma parte del destino.** `flutter run -d chrome` elige
+> un puerto distinto en cada arranque si no se lo fijas, así que Google
+> autentica bien y te devuelve a un puerto donde ya no hay nadie:
+> `ERR_CONNECTION_REFUSED`, que parece un fallo del login y no lo es.
+>
+> ```bash
+> flutter run -d chrome --web-port=5001
+> ```
+>
+> Y `localhost` no es `127.0.0.1` para el proveedor, aunque sean la misma
+> máquina: abre la app por el mismo origen que registraste.
+
+Fuera de web el destino es el esquema propio de la app, declarado en
+`AndroidManifest.xml` y en `Info.plist`. No lleva dominio, así que no cambia al
+publicar.
+
 ¿Qué proveedores tienes activos? Para pintar solo los botones que funcionan:
 
 ```dart
