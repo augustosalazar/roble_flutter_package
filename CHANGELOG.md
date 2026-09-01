@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.8.0
+
+### Añadido
+
+- **`db.authStateChanges`: la sesión como un flujo.** Emite al entrar, al
+  recuperar una sesión guardada, al salir y cuando se cae sola. Quien se
+  suscribe recibe primero el estado actual, así que una pantalla puede pintarse
+  desde aquí sin preguntar nada aparte.
+
+  ```dart
+  StreamBuilder<RobleAuthState>(
+    stream: db.authStateChanges,
+    builder: (_, snap) =>
+        snap.data?.isSignedIn ?? false ? const Inicio() : const Login(),
+  );
+  ```
+
+  Cada estado dice **por qué** cambió (`RobleAuthReason`), que es lo que un
+  `User?` a secas no cuenta: `signedOut` y `expired` dejan los dos sin sesión,
+  pero solo uno merece un «tu sesión caducó». `restored` se distingue de
+  `signedIn` porque recuperar una sesión guardada no es que alguien acabe de
+  entrar.
+
+  `db.authState` da el estado de ahora mismo sin esperar al siguiente cambio.
+
+### Cambiado
+
+- `onSessionExpired` pasa a ser un filtro de `authStateChanges`, no otro
+  mecanismo. Mismo comportamiento que en 1.7.0 —avisa una sola vez por caída,
+  se rearma al entrar, calla en `logout()`—, y sigue sin repetir el estado
+  actual al suscribirse: es un aviso de lo que pase a partir de ahora, no algo
+  que se reparta a quien llega tarde.
+
+- `restoreSession()` pide el perfil al comprobar que la sesión sigue viva, para
+  poder emitirlo con el estado. Una app que ya lo pedía por su cuenta al
+  arrancar puede dejar de hacerlo.
+
 ## 1.7.0
 
 ### Añadido

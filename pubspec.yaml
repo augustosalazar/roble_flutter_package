@@ -1,6 +1,6 @@
 name: roble
 description: "Cliente Flutter para la plataforma ROBLE de Uninorte OpenLab. Autenticación y CRUD sobre bases de datos PostgreSQL."
-version: 1.7.0
+version: 1.8.0
 homepage: https://github.com/augustosalazar/roble_api_database
 repository: https://github.com/augustosalazar/roble_api_database
 issue_tracker: https://github.com/augustosalazar/roble_api_database/issues

@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'roble_api_config.dart';
 import 'roble_api_exception.dart';
+import 'roble_auth_state.dart';
 import 'roble_file_storage.dart';
 import 'roble_models.dart';
 import 'roble_pkce.dart';
@@ -45,37 +46,92 @@ class RobleApiDataBase {
   /// sobreviviera al intento, un código robado podría canjearse más tarde.
   RoblePkce? _pkcePendiente;
 
-  /// Avisa cuando la sesión se cae sola, sin que nadie haya cerrado sesión.
+  /// El estado de la sesión, y cada cambio que le pase.
   ///
-  /// Ocurre cuando el servidor rechaza el access token y el refresh token
-  /// tampoco vale: a partir de ahí no hay forma de seguir, y el paquete es
-  /// quien primero lo sabe —es el código al que le acaba de fallar el
-  /// refresco—. Deducirlo en la app cazando [RobleApiAuthException] funciona,
-  /// pero solo si alguien hace una llamada y la captura en el sitio correcto.
+  /// Emite al entrar, al recuperar una sesión guardada, al salir y cuando se
+  /// cae sola. Quien se suscribe recibe primero el estado actual, así que una
+  /// pantalla puede pintarse desde aquí sin preguntar nada aparte:
   ///
-  /// La sesión ya está descartada cuando esto emite: quien escuche solo tiene
-  /// que llevar a la persona de vuelta a la pantalla de entrada.
+  /// ```dart
+  /// StreamBuilder<RobleAuthState>(
+  ///   stream: db.authStateChanges,
+  ///   builder: (_, snap) => snap.data?.isSignedIn ?? false
+  ///       ? const Inicio()
+  ///       : const Login(),
+  /// );
+  /// ```
+  ///
+  /// El [RobleAuthState.reason] dice **por qué** cambió, que es lo que `null`
+  /// por sí solo no cuenta: cerrar sesión y que se te caiga dejan los dos sin
+  /// sesión, pero solo uno merece un «tu sesión caducó».
+  Stream<RobleAuthState> get authStateChanges {
+    // A mano y no con `async*`: un generador no se suscribe a la fuente hasta
+    // después de entregar su primer `yield`, así que lo que se emitiera en ese
+    // hueco —justo lo que hace `restoreSession(verify: false)`, que no llama a
+    // nadie— se perdía sin que nadie lo viera.
+    late StreamController<RobleAuthState> salida;
+    StreamSubscription<RobleAuthState>? fuente;
+
+    salida = StreamController<RobleAuthState>(
+      onListen: () {
+        // La suscripción queda viva ya, antes de repartir nada.
+        fuente = _authStates.stream.listen(
+          salida.add,
+          onError: salida.addError,
+          onDone: salida.close,
+        );
+        salida.add(_authState);
+      },
+      onPause: () => fuente?.pause(),
+      onResume: () => fuente?.resume(),
+      onCancel: () => fuente?.cancel(),
+    );
+
+    return salida.stream;
+  }
+
+  /// El estado de la sesión ahora mismo, sin esperar al siguiente cambio.
+  RobleAuthState get authState => _authState;
+
+  /// Solo las caídas, para quien únicamente quiera mandar a la entrada.
+  ///
+  /// Es un filtro de [authStateChanges], no otro mecanismo. A diferencia de
+  /// aquel, este **no** repite el estado actual al suscribirse: avisa de lo que
+  /// pase a partir de ahora, que es lo que se espera de un aviso.
   ///
   /// ```dart
   /// db.onSessionExpired.listen((_) => irALogin());
   /// ```
-  ///
-  /// No emite en [logOut]: cerrar sesión a propósito no es que se te caiga.
-  Stream<void> get onSessionExpired => _sessionExpired.stream;
+  Stream<void> get onSessionExpired => _authStates.stream
+      .where((estado) => estado.hasExpired)
+      .map((_) {});
 
-  final _sessionExpired = StreamController<void>.broadcast();
+  final _authStates = StreamController<RobleAuthState>.broadcast();
 
-  /// Emite una sola vez por sesión caída.
+  RobleAuthState _authState = const RobleAuthState(
+    user: null,
+    reason: RobleAuthReason.signedOut,
+  );
+
+  /// Se avisa una sola vez por sesión caída.
   ///
   /// Una app hace varias llamadas a la vez —la lista, el perfil, el chat— y
-  /// todas fallan con el mismo 401. Sin esto, cada una avisaría por su cuenta
-  /// y quien escuche recibiría el aviso repetido.
+  /// todas fallan con el mismo 401. Sin esto, cada una avisaría por su cuenta.
   bool _sessionExpiredAvisado = false;
 
-  void _avisarSesionCaida() {
-    if (_sessionExpiredAvisado) return;
-    _sessionExpiredAvisado = true;
-    if (!_sessionExpired.isClosed) _sessionExpired.add(null);
+  void _emitAuthState(RobleAuthReason reason, [Map<String, dynamic>? user]) {
+    if (reason == RobleAuthReason.expired) {
+      if (_sessionExpiredAvisado) return;
+      _sessionExpiredAvisado = true;
+    }
+
+    // Salir de donde ya no se estaba no es un cambio: pasa al arrancar sin
+    // sesión guardada, y repetirlo haría que una app pintara la entrada dos
+    // veces.
+    if (reason == RobleAuthReason.signedOut && !_authState.isSignedIn) return;
+
+    _authState = RobleAuthState(user: user, reason: reason);
+    if (!_authStates.isClosed) _authStates.add(_authState);
   }
 
   late final String _storageKey =
@@ -219,11 +275,16 @@ class RobleApiDataBase {
     // Si la sesión venía del almacén, se sigue persistiendo.
     _persistTokens = true;
 
-    if (!verify) return true;
+    if (!verify) {
+      // Sin perfil: no se ha llamado al servidor, que es justo lo que se pidió.
+      _emitAuthState(RobleAuthReason.restored);
+      return true;
+    }
 
     // 2. Renovar es la única forma de saber si el refresh token sigue vivo.
     try {
       await _refreshAccessToken();
+      _emitAuthState(RobleAuthReason.restored, await currentUser());
       return true;
     } on RobleApiNetworkException {
       rethrow;
@@ -231,6 +292,10 @@ class RobleApiDataBase {
       rethrow;
     } catch (_) {
       // Token revocado o caducado: la sesión ya no sirve.
+      //
+      // No es una caída: nadie estaba dentro todavía. Arrancar con una sesión
+      // guardada que ya no vale es de lo más normal, y decirle a quien abre la
+      // app que «su sesión caducó» antes de enseñarle nada no ayuda.
       _clearTokens();
       return false;
     }
@@ -391,7 +456,7 @@ class RobleApiDataBase {
           // nada y la app no tiene por qué distinguir entre «caducada» y
           // «caducada pero todavía guardada».
           _clearTokens();
-          _avisarSesionCaida();
+          _emitAuthState(RobleAuthReason.expired);
           throw RobleApiAuthException(
               'Token expirado y no se pudo refrescar: $e');
         }
@@ -606,7 +671,9 @@ class RobleApiDataBase {
       _updateAccessToken(res['accessToken'] as String?);
     }
 
-    return await currentUser();
+    final perfil = await currentUser();
+    _emitAuthState(RobleAuthReason.signedIn, perfil);
+    return perfil;
   }
 
   /// Cierra la sesión en el servidor y descarta los tokens locales.
@@ -618,6 +685,7 @@ class RobleApiDataBase {
 
     await _makeRequest('POST', 'logout', isAuthRequest: true);
     _clearTokens();
+    _emitAuthState(RobleAuthReason.signedOut);
   }
 
   /// Devuelve el perfil del usuario autenticado: `userId`, `email`, `name`,
@@ -882,7 +950,9 @@ class RobleApiDataBase {
           'La respuesta no incluyó un access token.');
     }
 
-    return await currentUser();
+    final perfil = await currentUser();
+    _emitAuthState(RobleAuthReason.signedIn, perfil);
+    return perfil;
   }
 
   /// Convierte el `409` del servidor en [RobleApiConflictException].

@@ -4,6 +4,7 @@ library roble;
 export 'src/roble_api_config.dart';
 export 'src/roble_api_database_impl.dart';
 export 'src/roble_api_exception.dart';
+export 'src/roble_auth_state.dart';
 export 'src/roble_file_storage.dart';
 export 'src/roble_models.dart';
 export 'src/roble_pkce.dart';
