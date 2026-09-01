@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.9.0
+
+### Añadido
+
+- **`RobleUser`: el perfil con tipos.** Lo mismo que devuelve `currentUser()`,
+  pero convertido: `userId`, `email`, `name`, `role`, `extra` y las fechas ya
+  como `DateTime`.
+
+  Está aquí y no en cada app porque el `Map` viene siempre igual: si cada
+  proyecto lo convierte por su cuenta, cada proyecto se equivoca por su cuenta
+  con los campos que pueden faltar —`role` no existía antes de la v1.7.8 del
+  backend— y con los nombres que el servidor cambió por el camino. Lo que el
+  paquete todavía no conozca sigue estando en `raw`.
+
+  Es el mismo tipo que el paquete de JS ya tenía.
+
+### Cambiado
+
+- `RobleAuthState.user` pasa de `Map<String, dynamic>?` a `RobleUser?`. Quien
+  escuche `authStateChanges` recibe el perfil ya convertido, así que una app no
+  necesita traducirlo en su capa de datos para no meter mapas sueltos en la
+  interfaz.
+
+  `currentUser()` sigue devolviendo el `Map` tal cual, así que nada de lo que
+  ya funcionaba deja de hacerlo.
+
 ## 1.8.0
 
 ### Añadido

@@ -18,6 +18,7 @@ import 'roble_realtime_client.dart';
 import 'roble_social_auth.dart';
 import 'roble_social_window.dart';
 import 'roble_storage.dart';
+import 'roble_user.dart';
 
 /// Cliente HTTP robusto para interactuar con la API Roble.
 ///
@@ -119,7 +120,7 @@ class RobleApiDataBase {
   /// todas fallan con el mismo 401. Sin esto, cada una avisaría por su cuenta.
   bool _sessionExpiredAvisado = false;
 
-  void _emitAuthState(RobleAuthReason reason, [Map<String, dynamic>? user]) {
+  void _emitAuthState(RobleAuthReason reason, [RobleUser? user]) {
     if (reason == RobleAuthReason.expired) {
       if (_sessionExpiredAvisado) return;
       _sessionExpiredAvisado = true;
@@ -284,7 +285,8 @@ class RobleApiDataBase {
     // 2. Renovar es la única forma de saber si el refresh token sigue vivo.
     try {
       await _refreshAccessToken();
-      _emitAuthState(RobleAuthReason.restored, await currentUser());
+      _emitAuthState(
+          RobleAuthReason.restored, RobleUser.fromJson(await currentUser()));
       return true;
     } on RobleApiNetworkException {
       rethrow;
@@ -672,7 +674,7 @@ class RobleApiDataBase {
     }
 
     final perfil = await currentUser();
-    _emitAuthState(RobleAuthReason.signedIn, perfil);
+    _emitAuthState(RobleAuthReason.signedIn, RobleUser.fromJson(perfil));
     return perfil;
   }
 
@@ -951,7 +953,7 @@ class RobleApiDataBase {
     }
 
     final perfil = await currentUser();
-    _emitAuthState(RobleAuthReason.signedIn, perfil);
+    _emitAuthState(RobleAuthReason.signedIn, RobleUser.fromJson(perfil));
     return perfil;
   }
 

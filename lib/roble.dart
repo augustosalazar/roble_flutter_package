@@ -15,3 +15,4 @@ export 'src/roble_realtime.dart';
 export 'src/roble_realtime_client.dart';
 export 'src/roble_social_auth.dart';
 export 'src/roble_storage.dart';
+export 'src/roble_user.dart';

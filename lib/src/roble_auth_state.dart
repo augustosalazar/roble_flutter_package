@@ -1,3 +1,5 @@
+import 'roble_user.dart';
+
 /// Por qué cambió la sesión.
 ///
 /// Existe porque `null` no basta: quien escucha necesita distinguir «se fue»
@@ -25,14 +27,14 @@ class RobleAuthState {
 
   /// El perfil de quien entró, o `null` si no hay nadie.
   ///
-  /// Es lo que devuelve [RobleApiDataBase.currentUser]: `userId`, `email`,
-  /// `name`, `role` y lo que se haya guardado en `extra`.
+  /// Ya convertido: quien escuche no tiene que saber cómo viene el `Map` del
+  /// servidor ni qué campos pueden faltar.
   ///
   /// Puede ser `null` **con sesión iniciada**: `restoreSession(verify: false)`
   /// carga los tokens sin llamar al servidor, así que no hay perfil que dar.
   /// Para saber si hay sesión, [isSignedIn]; para pintar un nombre, comprueba
   /// esto o pide [RobleApiDataBase.currentUser].
-  final Map<String, dynamic>? user;
+  final RobleUser? user;
 
   final RobleAuthReason reason;
 
@@ -46,5 +48,5 @@ class RobleAuthState {
 
   @override
   String toString() => 'RobleAuthState(${reason.name}, '
-      'user: ${user?['email'] ?? 'ninguno'})';
+      'user: ${user?.email ?? 'ninguno'})';
 }

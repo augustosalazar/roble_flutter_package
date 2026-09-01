@@ -111,7 +111,7 @@ void main() {
       // El primero es el estado inicial que se reparte al suscribirse.
       expect(estados.map((e) => e.reason),
           [RobleAuthReason.signedOut, RobleAuthReason.signedIn]);
-      expect(estados.last.user?['email'], 'ana@correo.com');
+      expect(estados.last.user?.email, 'ana@correo.com');
       expect(estados.last.isSignedIn, isTrue);
     });
 
@@ -129,7 +129,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(estados.last.reason, RobleAuthReason.signedIn);
-      expect(estados.last.user?['email'], 'ana@correo.com');
+      expect(estados.last.user?.email, 'ana@correo.com');
     });
   });
 
@@ -150,7 +150,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(estados.last.reason, RobleAuthReason.restored);
-      expect(estados.last.user?['email'], 'ana@correo.com');
+      expect(estados.last.user?.email, 'ana@correo.com');
     });
 
     test('sin verificar hay sesión pero todavía no hay perfil', () async {
