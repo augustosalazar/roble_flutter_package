@@ -45,6 +45,39 @@ class RobleApiDataBase {
   /// sobreviviera al intento, un código robado podría canjearse más tarde.
   RoblePkce? _pkcePendiente;
 
+  /// Avisa cuando la sesión se cae sola, sin que nadie haya cerrado sesión.
+  ///
+  /// Ocurre cuando el servidor rechaza el access token y el refresh token
+  /// tampoco vale: a partir de ahí no hay forma de seguir, y el paquete es
+  /// quien primero lo sabe —es el código al que le acaba de fallar el
+  /// refresco—. Deducirlo en la app cazando [RobleApiAuthException] funciona,
+  /// pero solo si alguien hace una llamada y la captura en el sitio correcto.
+  ///
+  /// La sesión ya está descartada cuando esto emite: quien escuche solo tiene
+  /// que llevar a la persona de vuelta a la pantalla de entrada.
+  ///
+  /// ```dart
+  /// db.onSessionExpired.listen((_) => irALogin());
+  /// ```
+  ///
+  /// No emite en [logOut]: cerrar sesión a propósito no es que se te caiga.
+  Stream<void> get onSessionExpired => _sessionExpired.stream;
+
+  final _sessionExpired = StreamController<void>.broadcast();
+
+  /// Emite una sola vez por sesión caída.
+  ///
+  /// Una app hace varias llamadas a la vez —la lista, el perfil, el chat— y
+  /// todas fallan con el mismo 401. Sin esto, cada una avisaría por su cuenta
+  /// y quien escuche recibiría el aviso repetido.
+  bool _sessionExpiredAvisado = false;
+
+  void _avisarSesionCaida() {
+    if (_sessionExpiredAvisado) return;
+    _sessionExpiredAvisado = true;
+    if (!_sessionExpired.isClosed) _sessionExpired.add(null);
+  }
+
   late final String _storageKey =
       'roble.session.${config.authUrl.split('/').last}';
 
@@ -133,6 +166,9 @@ class RobleApiDataBase {
   bool get isLoggedIn => _accessToken != null && _accessToken!.isNotEmpty;
 
   void _updateAccessToken(String? token) {
+    // Una sesión nueva vuelve a armar el aviso: si no, la segunda vez que se
+    // cayera nadie se enteraría.
+    if (token != null && token.isNotEmpty) _sessionExpiredAvisado = false;
     _accessToken = token;
     // Único punto por el que pasan login, refresco, logout y restauración.
     unawaited(_persistSession());
@@ -350,6 +386,12 @@ class RobleApiDataBase {
         try {
           await _refreshAccessToken();
         } catch (e) {
+          // El refresh token tampoco vale: la sesión se acabó. Se tira aquí
+          // en vez de dejarla a medias, porque lo que queda no sirve para
+          // nada y la app no tiene por qué distinguir entre «caducada» y
+          // «caducada pero todavía guardada».
+          _clearTokens();
+          _avisarSesionCaida();
           throw RobleApiAuthException(
               'Token expirado y no se pudo refrescar: $e');
         }

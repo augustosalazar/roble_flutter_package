@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.7.0
+
+### Añadido
+
+- **`db.onSessionExpired`: aviso cuando la sesión se cae sola.** Emite cuando
+  el servidor rechaza el access token y el refresh token tampoco vale, que es
+  el punto en el que ya no hay forma de seguir.
+
+  ```dart
+  db.onSessionExpired.listen((_) => irALogin());
+  ```
+
+  Antes esto solo se podía deducir cazando `RobleApiAuthException` en la app, y
+  únicamente si alguien hacía una llamada y la capturaba en el sitio correcto:
+  una sesión caducada se quedaba enseñando el mensaje de error en cada pantalla
+  mientras la app seguía creyéndose dentro. El paquete es quien primero lo
+  sabe, porque es el código al que le acaba de fallar el refresco.
+
+  La sesión ya está descartada cuando emite —`isLoggedIn` es `false`—, así que
+  quien escuche solo tiene que llevar a la persona de vuelta a la entrada.
+  Emite una sola vez por sesión caída, aunque fallen a la vez varias llamadas,
+  y no emite en `logout()`: cerrar sesión a propósito no es que se te caiga.
+
 ## 1.6.0
 
 ### Añadido
