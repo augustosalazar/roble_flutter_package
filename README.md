@@ -431,6 +431,39 @@ Al conectar, el servidor ya manda cuántas hay sin leer:
 db.notifications.unreadCountChanges.listen((n) => setState(() => badge = n));
 ```
 
+### Que lleguen con la app cerrada (push)
+
+Lo de arriba llega mientras la app está abierta. Para que suene con la app
+cerrada hace falta Firebase, y hacen falta **tus** credenciales, no las de
+Roble: un token de FCM está atado al proyecto de Firebase con el que registraste
+tu app, así que nadie puede enviarle push en tu nombre.
+
+Una vez, en la consola de Roble: sección **Notificaciones → Push**, sube el JSON
+de la cuenta de servicio de tu proyecto de Firebase (Configuración del proyecto
+→ Cuentas de servicio → Generar nueva clave privada).
+
+Después, en tu app. El token lo da `firebase_messaging`, que va en tu app y no
+en este paquete —así una app que no quiera push no carga Firebase—:
+
+```dart
+final token = await FirebaseMessaging.instance.getToken();
+if (token != null) {
+  await db.notifications.registerDevice(token, RobleDevicePlatform.android);
+}
+```
+
+Llámalo en cada arranque: repetirlo con el mismo token no duplica nada, solo
+refresca la fecha. Y al cerrar sesión, **antes** de `logout()`:
+
+```dart
+await db.notifications.unregisterDevice(token);
+```
+
+Si no lo sueltas, ese aparato sigue recibiendo los avisos de esa cuenta.
+
+El push es un segundo camino, no el principal: la notificación se guarda y llega
+por el stream igual aunque Firebase no esté configurado o falle.
+
 ### Ojo
 
 Cualquiera con sesión en el proyecto puede enviar a cualquiera, igual que
@@ -567,6 +600,9 @@ Un `RobleChange` trae `type` (`insert`, `update`, `delete`), `table`,
 | `notifications.remove()` | nada |
 | `notifications.watch()` | `Stream<RobleNotificationEvent>` |
 | `notifications.unreadCountChanges` | `Stream<int>` |
+| `notifications.registerDevice()` | el aparato apuntado |
+| `notifications.unregisterDevice()` | nada |
+| `notifications.devices()` | `List<RobleDevice>` — los aparatos de esta cuenta |
 
 Una `RobleNotification` trae `id`, `title`, `body`, `topic`, `data`,
 `recipientId` (`*` si es de proyecto, o `isForEveryone`), `senderId`, `readAt`

@@ -238,3 +238,59 @@ class RobleNotificationEvent {
   @override
   String toString() => 'RobleNotificationEvent($type, ${notification.id})';
 }
+
+/// Sistema del aparato que recibe el push.
+enum RobleDevicePlatform {
+  android,
+  ios,
+  web;
+
+  /// Como lo espera el servidor.
+  String get wire => name;
+
+  static RobleDevicePlatform fromWire(String value) {
+    for (final p in RobleDevicePlatform.values) {
+      if (p.name == value) return p;
+    }
+    throw FormatException('Plataforma desconocida: $value');
+  }
+}
+
+/// Un aparato apuntado para recibir push.
+class RobleDevice {
+  const RobleDevice({
+    required this.dbName,
+    required this.userId,
+    required this.token,
+    required this.platform,
+    required this.createdAt,
+    required this.lastSeenAt,
+  });
+
+  final String dbName;
+  final String userId;
+
+  /// El token de FCM del aparato.
+  final String token;
+
+  final RobleDevicePlatform platform;
+  final DateTime createdAt;
+  final DateTime lastSeenAt;
+
+  factory RobleDevice.fromJson(Map<dynamic, dynamic> json) {
+    DateTime fecha(Object? raw) =>
+        DateTime.tryParse('$raw')?.toLocal() ?? DateTime.now();
+
+    return RobleDevice(
+      dbName: '${json['dbName']}',
+      userId: '${json['userId']}',
+      token: '${json['token']}',
+      platform: RobleDevicePlatform.fromWire('${json['platform']}'),
+      createdAt: fecha(json['createdAt']),
+      lastSeenAt: fecha(json['lastSeenAt']),
+    );
+  }
+
+  @override
+  String toString() => 'RobleDevice($platform, ${token.substring(0, 8)}…)';
+}

@@ -29,6 +29,24 @@
 
   Mismas funciones que `db.notifications` del paquete de JS (3.9.0).
 
+- **`registerDevice(token, platform)`: notificaciones con la app cerrada.** El
+  token lo da `firebase_messaging`, que va en tu app y no en este paquete: así
+  una app que no quiera push no carga Firebase.
+
+  ```dart
+  final token = await FirebaseMessaging.instance.getToken();
+  if (token != null) {
+    await db.notifications.registerDevice(token, RobleDevicePlatform.android);
+  }
+  ```
+
+  Hacen falta **tus** credenciales de Firebase, subidas en la consola de Roble:
+  un token de FCM está atado al proyecto de Firebase con el que registraste la
+  app, así que Roble no puede enviarle push con las suyas.
+
+  `unregisterDevice(token)` antes de cerrar sesión; si no, ese aparato sigue
+  recibiendo los avisos de esa cuenta.
+
 
 ## 1.9.0
 

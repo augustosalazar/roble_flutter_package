@@ -295,6 +295,37 @@ void main() {
       expect(await db.notifications.markAllRead(), 3);
     });
 
+    test('apuntar el aparato manda token y plataforma', () async {
+      final db = cliente([
+        (_) => json200({
+              'dbName': 'proyecto_ab12',
+              'userId': 'user-1',
+              'token': 'tok-1',
+              'platform': 'android',
+              'createdAt': '2026-09-02T10:00:00.000Z',
+              'lastSeenAt': '2026-09-02T10:00:00.000Z',
+            })
+      ]);
+
+      final aparato = await db.notifications
+          .registerDevice('tok-1', RobleDevicePlatform.android);
+
+      expect(peticiones.single.url.path,
+          '/realtime/notifications/proyecto_ab12/devices');
+      expect(jsonDecode(peticiones.single.body),
+          {'token': 'tok-1', 'platform': 'android'});
+      expect(aparato.platform, RobleDevicePlatform.android);
+    });
+
+    test('soltar el aparato escapa el token en la ruta', () async {
+      final db = cliente([(_) => json200({'success': true})]);
+
+      await db.notifications.unregisterDevice('a/b+c');
+
+      expect(peticiones.single.url.path,
+          '/realtime/notifications/proyecto_ab12/devices/a%2Fb%2Bc');
+    });
+
     test('el id va escapado en la ruta', () async {
       final db = cliente([(_) => json200(notificacionJson())]);
 

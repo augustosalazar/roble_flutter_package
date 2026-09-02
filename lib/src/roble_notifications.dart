@@ -147,6 +147,49 @@ class RobleNotifications {
     await _request('DELETE', Uri.encodeComponent(id));
   }
 
+  /// Apunta este aparato para recibir push con la app cerrada.
+  ///
+  /// El [token] lo da el SDK de Firebase dentro de tu app —este paquete no
+  /// depende de `firebase_messaging` ni lo pide por ti—, y el push solo sale si
+  /// el proyecto tiene subidas sus credenciales de Firebase en la consola de
+  /// Roble.
+  ///
+  /// Llamarlo otra vez con el mismo token no duplica nada: solo refresca la
+  /// fecha, que es lo que conviene hacer en cada arranque.
+  ///
+  /// ```dart
+  /// final token = await FirebaseMessaging.instance.getToken();
+  /// if (token != null) {
+  ///   await db.notifications.registerDevice(token, RobleDevicePlatform.android);
+  /// }
+  /// ```
+  Future<RobleDevice> registerDevice(
+    String token,
+    RobleDevicePlatform platform,
+  ) async {
+    final res = await _request(
+      'POST',
+      'devices',
+      body: {'token': token, 'platform': platform.wire},
+    );
+    return RobleDevice.fromJson(res as Map);
+  }
+
+  /// Deja de recibir push en este aparato.
+  ///
+  /// Llamalo **antes** de cerrar sesion: despues ya no hay token con el que
+  /// pedirlo, y el aparato seguiria recibiendo los avisos de esa cuenta.
+  Future<void> unregisterDevice(String token) async {
+    await _request('DELETE', 'devices/${Uri.encodeComponent(token)}');
+  }
+
+  /// Los aparatos que esta cuenta tiene apuntados.
+  Future<List<RobleDevice>> devices() async {
+    final res = await _request('GET', 'devices');
+    return (res as List?)?.whereType<Map>().map(RobleDevice.fromJson).toList() ??
+        const [];
+  }
+
   /// Las notificaciones segun van llegando.
   ///
   /// El stream **no** trae las anteriores, solo lo que pase a partir de ahora:
