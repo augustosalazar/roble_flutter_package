@@ -13,6 +13,8 @@ import 'roble_models.dart';
 import 'roble_pkce.dart';
 import 'roble_google_signin.dart';
 import 'roble_json_db.dart';
+import 'roble_notifications.dart';
+import 'roble_notifications_client.dart';
 import 'roble_realtime.dart';
 import 'roble_realtime_client.dart';
 import 'roble_social_auth.dart';
@@ -241,6 +243,9 @@ class RobleApiDataBase {
     unawaited(_realtime?.close());
     _realtime = null;
     _json = null;
+    unawaited(_notificationsClient?.close());
+    _notificationsClient = null;
+    _notifications = null;
   }
 
   /// Restaura la sesión y comprueba que siga siendo válida.
@@ -1172,6 +1177,58 @@ class RobleApiDataBase {
         baseUrlOverride: config.realtimeUrl,
       ),
     );
+  }
+
+  RobleNotificationsClient? _notificationsClient;
+
+  /// Canal de notificaciones, creado la primera vez que se usa.
+  ///
+  /// Aparte del de [realtime]: son dos namespaces distintos y una app puede
+  /// querer uno sin el otro.
+  RobleNotificationsClient get notificationsConnection {
+    return _notificationsClient ??= RobleNotificationsClient(
+      origin: Uri.parse(config.realtimeUrl).origin,
+      dbName: config.realtimeUrl.split('/').last,
+      accessToken: () => _accessToken,
+      socketFactory: socketFactory,
+    );
+  }
+
+  RobleNotifications? _notifications;
+
+  /// Notificaciones del proyecto: avisos que se guardan y llegan al momento a
+  /// quien tenga la app abierta.
+  ///
+  /// Funcion aparte del arbol JSON: no hay coleccion que crear ni ruta que
+  /// elegir, el destinatario es un usuario del proyecto y cada uno lleva su
+  /// propio estado de leido.
+  ///
+  /// ```dart
+  /// db.notifications.watch().listen((e) => mostrar(e.notification.title));
+  /// await db.notifications.send(to: otroUsuarioId, title: 'Te toca');
+  /// ```
+  RobleNotifications get notifications {
+    return _notifications ??= RobleNotifications(
+      client: notificationsConnection,
+      request: (method, path, {body, queryParams}) => _makeRequest(
+        method,
+        path,
+        body: body,
+        queryParams: queryParams,
+        baseUrlOverride: _notificationsBaseUrl,
+      ),
+    );
+  }
+
+  /// `{host}/realtime/notifications/{contrato}`.
+  ///
+  /// Cuelga de `/realtime` porque comparte servicio con el arbol JSON, pero un
+  /// nivel antes del contrato: `realtimeUrl` apunta a `/realtime/{contrato}`,
+  /// que es la raiz del arbol, y las notificaciones no son una coleccion suya.
+  String get _notificationsBaseUrl {
+    final uri = Uri.parse(config.realtimeUrl);
+    return '${uri.origin}/realtime/notifications/'
+        '${config.realtimeUrl.split('/').last}';
   }
 
   RobleFileStorage? _files;

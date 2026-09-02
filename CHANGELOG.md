@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.10.0
+
+### Añadido
+
+- **`db.notifications`: avisos que se guardan y llegan al momento.** Función
+  aparte del árbol JSON: no hay colección que crear ni ruta que elegir, el
+  destinatario es un usuario del proyecto y cada uno lleva su propio estado de
+  leído.
+
+  ```dart
+  db.notifications.watch().listen((e) => mostrar(e.notification.title));
+
+  await db.notifications.send(to: otroUsuarioId, title: 'Te toca');
+  ```
+
+  `send(to: robleNotificationEveryone)` va a todo el proyecto, y que una persona
+  la lea no la marca para las demás.
+
+  `list()`, `unreadCount()`, `markRead()`, `markAllRead()` y `remove()` para lo
+  que ya estaba ahí —el stream solo trae lo que llegue a partir de ahora—, y
+  `notifications.unreadCountChanges` para el globito, que el servidor manda al
+  conectar sin que haya que pedirlo.
+
+  Va por su propio socket, contra el namespace `/notifications`: una app puede
+  usar notificaciones sin usar tiempo real, y al revés. Cerrar sesión lo cierra,
+  igual que ya hacía con el de tiempo real.
+
+  Mismas funciones que `db.notifications` del paquete de JS (3.9.0).
+
+
 ## 1.9.0
 
 ### Añadido

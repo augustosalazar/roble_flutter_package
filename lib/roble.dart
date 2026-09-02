@@ -11,6 +11,8 @@ export 'src/roble_pkce.dart';
 export 'src/roble_google_signin.dart';
 export 'src/roble_json_db.dart';
 export 'src/roble_native_opener.dart';
+export 'src/roble_notifications.dart';
+export 'src/roble_notifications_client.dart';
 export 'src/roble_realtime.dart';
 export 'src/roble_realtime_client.dart';
 export 'src/roble_social_auth.dart';

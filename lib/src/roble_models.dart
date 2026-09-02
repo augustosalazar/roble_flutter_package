@@ -104,3 +104,137 @@ class RobleQueryResult {
   String toString() =>
       'RobleQueryResult(command: $command, rowCount: $rowCount)';
 }
+
+/// Destinatario que significa "todos los usuarios del proyecto".
+const String robleNotificationEveryone = '*';
+
+/// Que le paso a la notificacion.
+enum RobleNotificationEventType {
+  /// Alguien la envio.
+  created,
+
+  /// Este usuario la marco leida, quiza desde otro dispositivo.
+  read,
+
+  /// Se borro.
+  deleted;
+
+  static RobleNotificationEventType fromWire(String value) {
+    switch (value) {
+      case 'created':
+        return RobleNotificationEventType.created;
+      case 'read':
+        return RobleNotificationEventType.read;
+      case 'deleted':
+        return RobleNotificationEventType.deleted;
+      default:
+        throw FormatException('Tipo de notificacion desconocido: $value');
+    }
+  }
+}
+
+/// Un aviso dirigido a un usuario del proyecto, o a todo el proyecto.
+class RobleNotification {
+  const RobleNotification({
+    required this.id,
+    required this.dbName,
+    required this.recipientId,
+    required this.senderId,
+    required this.topic,
+    required this.title,
+    required this.body,
+    required this.data,
+    required this.readAt,
+    required this.createdAt,
+    required this.expiresAt,
+  });
+
+  final String id;
+
+  /// Proyecto al que pertenece.
+  final String dbName;
+
+  /// Usuario destinatario, o [robleNotificationEveryone] si va a todo el
+  /// proyecto.
+  final String recipientId;
+
+  /// Quien la envio, si se sabe.
+  final String? senderId;
+
+  /// Etiqueta libre para agrupar o filtrar (`chat`, `tareas`...).
+  final String? topic;
+
+  final String title;
+  final String? body;
+
+  /// Carga util libre: lo que la app necesite para abrir la pantalla correcta.
+  final Map<String, dynamic> data;
+
+  /// Cuando la marco leida **este** usuario, o `null`.
+  final DateTime? readAt;
+
+  final DateTime createdAt;
+
+  /// A partir de aqui deja de entregarse y de listarse.
+  final DateTime? expiresAt;
+
+  /// `true` si va a todo el proyecto y no a una persona.
+  bool get isForEveryone => recipientId == robleNotificationEveryone;
+
+  /// `true` si este usuario todavia no la ha leido.
+  bool get isUnread => readAt == null;
+
+  factory RobleNotification.fromJson(Map<dynamic, dynamic> json) {
+    DateTime? fecha(Object? raw) =>
+        raw == null ? null : DateTime.tryParse('$raw')?.toLocal();
+
+    final rawData = json['data'];
+
+    return RobleNotification(
+      id: '${json['id']}',
+      dbName: '${json['dbName']}',
+      recipientId: '${json['recipientId']}',
+      senderId: json['senderId'] == null ? null : '${json['senderId']}',
+      topic: json['topic'] == null ? null : '${json['topic']}',
+      title: '${json['title'] ?? ''}',
+      body: json['body'] == null ? null : '${json['body']}',
+      data: rawData is Map
+          ? Map<String, dynamic>.from(rawData)
+          : <String, dynamic>{},
+      readAt: fecha(json['readAt']),
+      // Sin fecha no se puede ordenar la lista; se prefiere "ahora" a tirar
+      // toda la notificacion por un campo que el servidor siempre manda.
+      createdAt: fecha(json['createdAt']) ?? DateTime.now(),
+      expiresAt: fecha(json['expiresAt']),
+    );
+  }
+
+  @override
+  String toString() =>
+      'RobleNotification(id: $id, title: $title, readAt: $readAt)';
+}
+
+/// Lo que llega por el canal de notificaciones.
+class RobleNotificationEvent {
+  const RobleNotificationEvent({
+    required this.type,
+    required this.notification,
+  });
+
+  final RobleNotificationEventType type;
+  final RobleNotification notification;
+
+  factory RobleNotificationEvent.fromJson(Map<dynamic, dynamic> json) {
+    final raw = json['notification'];
+    if (raw is! Map) {
+      throw const FormatException('El evento no trae la notificacion');
+    }
+    return RobleNotificationEvent(
+      type: RobleNotificationEventType.fromWire('${json['type']}'),
+      notification: RobleNotification.fromJson(raw),
+    );
+  }
+
+  @override
+  String toString() => 'RobleNotificationEvent($type, ${notification.id})';
+}

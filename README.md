@@ -359,6 +359,86 @@ Filtrar aquí ahorra el viaje de todo lo que no te interesa.
 
 ---
 
+## Notificaciones
+
+Avisos que se guardan y llegan al momento a quien tenga la app abierta. Es otra
+cosa que el árbol JSON: no hay colección que crear, no hay ruta que elegir, y el
+destinatario es un usuario del proyecto.
+
+```dart
+// Escuchar lo que vaya llegando.
+db.notifications.watch().listen((evento) {
+  if (evento.type == RobleNotificationEventType.created) {
+    mostrarAviso(evento.notification.title);
+  }
+});
+
+// Enviar a alguien.
+await db.notifications.send(
+  to: otroUsuarioId,
+  title: 'Te toca',
+  body: 'Ana movió ficha',
+  topic: 'partida',
+  data: {'partidaId': '42'},
+);
+```
+
+El `data` es tuyo: lo que la pantalla necesite para abrir lo correcto cuando
+alguien toque el aviso.
+
+### A todo el proyecto
+
+```dart
+await db.notifications.send(
+  to: robleNotificationEveryone,
+  title: 'Mañana no hay clase',
+);
+```
+
+Llega a todos. Cada persona la marca leída por su cuenta: que tú la leas no la
+marca para los demás. Una de proyecto no se puede borrar desde la app —la
+notificación es una sola y es de todos—, se marca leída y ya.
+
+### Lo que ya estaba ahí
+
+El stream **no** trae lo anterior, solo lo que llegue a partir de ahora. Para
+pintar la lista al abrir:
+
+```dart
+final lista = await db.notifications.list();              // las 50 últimas
+final sinLeer = await db.notifications.list(unread: true);
+final cuantas = await db.notifications.unreadCount();     // el número del globito
+```
+
+`list()` acepta `topic`, `limit` (1-100) y `before` para ir hacia atrás.
+
+### Marcarlas
+
+```dart
+await db.notifications.markRead(notificacion.id);
+await db.notifications.markAllRead();
+await db.notifications.remove(notificacion.id); // solo las dirigidas a ti
+```
+
+Marcar una vuelve por el stream como un evento `read`, y solo a **tus**
+dispositivos: el teléfono se entera de lo que marcaste en el navegador.
+
+### El globito, sin pedirlo
+
+Al conectar, el servidor ya manda cuántas hay sin leer:
+
+```dart
+db.notifications.unreadCountChanges.listen((n) => setState(() => badge = n));
+```
+
+### Ojo
+
+Cualquiera con sesión en el proyecto puede enviar a cualquiera, igual que
+cualquiera puede escribir en cualquier rama del árbol JSON. Si el aviso lo tiene
+que mandar solo el profesor, esa comprobación va en tu código.
+
+---
+
 ## Cuando algo falla
 
 Todo lanza alguna subclase de `RobleApiException`:
@@ -472,6 +552,25 @@ Todos los métodos son asíncronos salvo `isLoggedIn` e `isSocialCallback`.
 Un `RobleChange` trae `type` (`insert`, `update`, `delete`), `table`,
 `record` (la fila después del cambio, `null` al borrar), `previous`,
 `primaryKey`, `id`, `commitTimestamp` y `path` (solo en el árbol JSON).
+
+---
+
+### Notificaciones
+
+| Método | Devuelve |
+|---|---|
+| `notifications.send()` | las notificaciones creadas, una por destinatario |
+| `notifications.list()` | `List<RobleNotification>`, de la más reciente a la más antigua |
+| `notifications.unreadCount()` | `int` |
+| `notifications.markRead()` | la notificación ya marcada |
+| `notifications.markAllRead()` | `int` — cuántas cambiaron |
+| `notifications.remove()` | nada |
+| `notifications.watch()` | `Stream<RobleNotificationEvent>` |
+| `notifications.unreadCountChanges` | `Stream<int>` |
+
+Una `RobleNotification` trae `id`, `title`, `body`, `topic`, `data`,
+`recipientId` (`*` si es de proyecto, o `isForEveryone`), `senderId`, `readAt`
+(o `isUnread`), `createdAt` y `expiresAt`.
 
 ---
 
