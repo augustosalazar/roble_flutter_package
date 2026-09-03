@@ -295,6 +295,75 @@ void main() {
       expect(await db.notifications.markAllRead(), 3);
     });
 
+    test('programar manda la fecha en ISO y en UTC', () async {
+      final db = cliente([
+        (_) => json200({
+              'id': 'p-1',
+              'dbName': 'proyecto_ab12',
+              'sendAt': '2026-09-03T12:00:00.000Z',
+              'repeat': 'daily',
+              'recipients': ['user-1'],
+              'title': 'Cita',
+              'body': null,
+              'topic': null,
+              'data': {},
+              'status': 'pending',
+              'runs': 0,
+              'lastRunAt': null,
+              'lastError': null,
+              'senderId': 'user-2',
+              'senderKind': 'user',
+              'createdAt': '2026-09-02T10:00:00.000Z',
+            })
+      ]);
+
+      final p = await db.notifications.schedule(
+        to: 'user-1',
+        title: 'Cita',
+        at: DateTime.utc(2026, 9, 3, 12),
+        repeat: RobleRepeat.daily,
+      );
+
+      final body = jsonDecode(peticiones.single.body) as Map;
+      expect(peticiones.single.url.path,
+          '/realtime/notifications/proyecto_ab12/schedule');
+      expect(body['sendAt'], '2026-09-03T12:00:00.000Z');
+      expect(body['repeat'], 'daily');
+      expect(p.isPending, isTrue);
+      expect(p.repeat, RobleRepeat.daily);
+    });
+
+    test('una hora local se manda convertida a UTC', () async {
+      final db = cliente([
+        (_) => json200({
+              'id': 'p-1', 'dbName': 'proyecto_ab12',
+              'sendAt': '2026-09-03T12:00:00.000Z', 'repeat': 'none',
+              'recipients': ['*'], 'title': 'x', 'body': null, 'topic': null,
+              'data': {}, 'status': 'pending', 'runs': 0, 'lastRunAt': null,
+              'lastError': null, 'senderId': null, 'senderKind': 'user',
+              'createdAt': '2026-09-02T10:00:00.000Z',
+            })
+      ]);
+
+      final local = DateTime(2026, 9, 3, 7);
+      await db.notifications.schedule(to: '*', title: 'x', at: local);
+
+      final body = jsonDecode(peticiones.single.body) as Map;
+      // Mandar una hora local sin zona es la forma clasica de programar algo
+      // para la hora equivocada.
+      expect(body['sendAt'], local.toUtc().toIso8601String());
+      expect(body['sendAt'].toString().endsWith('Z'), isTrue);
+    });
+
+    test('cancelar escapa el id', () async {
+      final db = cliente([(_) => json200({'success': true})]);
+
+      await db.notifications.cancelScheduled('a/b');
+
+      expect(peticiones.single.url.path,
+          '/realtime/notifications/proyecto_ab12/schedule/a%2Fb');
+    });
+
     test('apuntar el aparato manda token y plataforma', () async {
       final db = cliente([
         (_) => json200({

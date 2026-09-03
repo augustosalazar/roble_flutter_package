@@ -294,3 +294,116 @@ class RobleDevice {
   @override
   String toString() => 'RobleDevice($platform, ${token.substring(0, 8)}…)';
 }
+
+/// Cada cuanto se repite un envio programado.
+enum RobleRepeat {
+  none,
+  daily,
+  weekly;
+
+  String get wire => name;
+
+  static RobleRepeat fromWire(String value) {
+    for (final r in RobleRepeat.values) {
+      if (r.name == value) return r;
+    }
+    throw FormatException('Repeticion desconocida: $value');
+  }
+}
+
+/// En que estado esta un envio programado.
+enum RobleScheduledStatus {
+  pending,
+  sent,
+  cancelled,
+  failed;
+
+  static RobleScheduledStatus fromWire(String value) {
+    for (final s in RobleScheduledStatus.values) {
+      if (s.name == value) return s;
+    }
+    throw FormatException('Estado desconocido: $value');
+  }
+}
+
+/// Un envio que el servidor hara cuando llegue la hora.
+class RobleScheduledNotification {
+  const RobleScheduledNotification({
+    required this.id,
+    required this.dbName,
+    required this.sendAt,
+    required this.repeat,
+    required this.recipients,
+    required this.title,
+    required this.body,
+    required this.topic,
+    required this.data,
+    required this.status,
+    required this.runs,
+    required this.lastRunAt,
+    required this.lastError,
+    required this.senderId,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String dbName;
+
+  /// Cuando toca el proximo envio.
+  final DateTime sendAt;
+
+  final RobleRepeat repeat;
+  final List<String> recipients;
+  final String title;
+  final String? body;
+  final String? topic;
+  final Map<String, dynamic> data;
+  final RobleScheduledStatus status;
+
+  /// Cuantas veces se ha enviado ya. Interesa en las repetidas.
+  final int runs;
+
+  final DateTime? lastRunAt;
+
+  /// Por que fallo, si fallo. Una repetida que falla se para.
+  final String? lastError;
+
+  final String? senderId;
+  final DateTime createdAt;
+
+  bool get isPending => status == RobleScheduledStatus.pending;
+
+  factory RobleScheduledNotification.fromJson(Map<dynamic, dynamic> json) {
+    DateTime? fecha(Object? raw) =>
+        raw == null ? null : DateTime.tryParse('$raw')?.toLocal();
+
+    final rawData = json['data'];
+    final rawRecipients = json['recipients'];
+
+    return RobleScheduledNotification(
+      id: '${json['id']}',
+      dbName: '${json['dbName']}',
+      sendAt: fecha(json['sendAt']) ?? DateTime.now(),
+      repeat: RobleRepeat.fromWire('${json['repeat']}'),
+      recipients: rawRecipients is List
+          ? rawRecipients.map((e) => '$e').toList()
+          : const [],
+      title: '${json['title'] ?? ''}',
+      body: json['body'] == null ? null : '${json['body']}',
+      topic: json['topic'] == null ? null : '${json['topic']}',
+      data: rawData is Map
+          ? Map<String, dynamic>.from(rawData)
+          : <String, dynamic>{},
+      status: RobleScheduledStatus.fromWire('${json['status']}'),
+      runs: (json['runs'] as num?)?.toInt() ?? 0,
+      lastRunAt: fecha(json['lastRunAt']),
+      lastError: json['lastError'] == null ? null : '${json['lastError']}',
+      senderId: json['senderId'] == null ? null : '${json['senderId']}',
+      createdAt: fecha(json['createdAt']) ?? DateTime.now(),
+    );
+  }
+
+  @override
+  String toString() =>
+      'RobleScheduledNotification($title, $sendAt, $status)';
+}

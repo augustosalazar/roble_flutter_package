@@ -431,6 +431,40 @@ Al conectar, el servidor ya manda cuántas hay sin leer:
 db.notifications.unreadCountChanges.listen((n) => setState(() => badge = n));
 ```
 
+### Enviar más tarde, o todos los días
+
+Una notificación se puede dejar programada: la manda el servidor cuando llegue
+la hora, aunque nadie tenga la app abierta.
+
+```dart
+// Un recordatorio, una sola vez.
+await db.notifications.schedule(
+  to: usuarioId,
+  title: 'Tu cita es en una hora',
+  at: DateTime.now().add(const Duration(hours: 1)),
+);
+
+// Un "buenos días" todos los días, sin montar un cron.
+await db.notifications.schedule(
+  to: robleNotificationEveryone,
+  title: '¡Buenos días!',
+  at: manana7am,
+  repeat: RobleRepeat.daily,
+);
+```
+
+```dart
+final pendientes = await db.notifications.scheduled();
+await db.notifications.cancelScheduled(pendientes.first.id);
+```
+
+La fecha se manda siempre en UTC, así que puedes pasar una hora local sin
+pensarlo. Solo ves las tuyas. Quien puede enviar también decide quién puede
+programar, y se comprueba dos veces: al programar —para que te enteres ahora— y
+al enviar, porque para entonces la política del proyecto puede haber cambiado.
+Si ya no puedes, queda en `failed` con el motivo en `lastError`, y una repetida
+que falla se para en vez de reintentar cada día.
+
 ### Que lleguen con la app cerrada (push)
 
 Lo de arriba llega mientras la app está abierta. Para que suene con la app
@@ -600,6 +634,9 @@ Un `RobleChange` trae `type` (`insert`, `update`, `delete`), `table`,
 | `notifications.remove()` | nada |
 | `notifications.watch()` | `Stream<RobleNotificationEvent>` |
 | `notifications.unreadCountChanges` | `Stream<int>` |
+| `notifications.schedule()` | el envío programado |
+| `notifications.scheduled()` | `List<RobleScheduledNotification>` — los tuyos |
+| `notifications.cancelScheduled()` | nada |
 | `notifications.registerDevice()` | el aparato apuntado |
 | `notifications.unregisterDevice()` | nada |
 | `notifications.devices()` | `List<RobleDevice>` — los aparatos de esta cuenta |

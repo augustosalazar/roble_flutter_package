@@ -147,6 +147,73 @@ class RobleNotifications {
     await _request('DELETE', Uri.encodeComponent(id));
   }
 
+  /// Programa un envio para mas tarde.
+  ///
+  /// Lo manda el servidor cuando llegue la hora, aunque nadie tenga la app
+  /// abierta. Con [repeat] se repite a diario o cada semana, que es como se
+  /// hace un "buenos dias" sin montar un cron.
+  ///
+  /// ```dart
+  /// await db.notifications.schedule(
+  ///   to: usuarioId,
+  ///   title: 'Tu cita es en una hora',
+  ///   at: DateTime.now().add(const Duration(hours: 1)),
+  /// );
+  /// ```
+  ///
+  /// Quien puede enviar tambien decide quien puede programar: se comprueba al
+  /// programar y otra vez al enviar, porque para entonces puede haber cambiado.
+  Future<RobleScheduledNotification> schedule({
+    required Object to,
+    required String title,
+    required DateTime at,
+    String? body,
+    String? topic,
+    Map<String, dynamic>? data,
+    RobleRepeat repeat = RobleRepeat.none,
+  }) async {
+    final recipients = to is List
+        ? to.map((e) => e.toString()).toList()
+        : <String>[to.toString()];
+
+    final res = await _request(
+      'POST',
+      'schedule',
+      body: {
+        'recipients': recipients,
+        'title': title,
+        if (body != null) 'body': body,
+        if (topic != null) 'topic': topic,
+        if (data != null) 'data': data,
+        'sendAt': at.toUtc().toIso8601String(),
+        'repeat': repeat.wire,
+      },
+    );
+    return RobleScheduledNotification.fromJson(res as Map);
+  }
+
+  /// Los envios que tienes programados.
+  ///
+  /// Solo los tuyos. Por defecto los pendientes; con [all] tambien los ya
+  /// enviados, cancelados y fallidos.
+  Future<List<RobleScheduledNotification>> scheduled({bool all = false}) async {
+    final res = await _request(
+      'GET',
+      'schedule',
+      queryParams: {if (all) 'all': 'true'},
+    );
+    return (res as List?)
+            ?.whereType<Map>()
+            .map(RobleScheduledNotification.fromJson)
+            .toList() ??
+        const [];
+  }
+
+  /// Cancela uno pendiente. No lo borra: queda como cancelado.
+  Future<void> cancelScheduled(String id) async {
+    await _request('DELETE', 'schedule/${Uri.encodeComponent(id)}');
+  }
+
   /// Apunta este aparato para recibir push con la app cerrada.
   ///
   /// El [token] lo da el SDK de Firebase dentro de tu app —este paquete no

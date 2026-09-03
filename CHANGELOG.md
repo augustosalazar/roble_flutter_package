@@ -29,6 +29,22 @@
 
   Mismas funciones que `db.notifications` del paquete de JS (3.9.0).
 
+- **`schedule(...)`: enviar más tarde, o todos los días.** Lo manda el servidor
+  cuando llegue la hora, aunque nadie tenga la app abierta.
+
+  ```dart
+  await db.notifications.schedule(
+    to: usuarioId,
+    title: 'Tu cita es en una hora',
+    at: DateTime.now().add(const Duration(hours: 1)),
+  );
+  ```
+
+  Con `RobleRepeat.daily` o `weekly` se repite, que es como se hace un «buenos
+  días» sin montar un cron. La fecha se convierte a UTC antes de enviarla, así
+  que una hora local no acaba programada para la hora equivocada.
+  `scheduled()` lista los tuyos y `cancelScheduled(id)` cancela uno pendiente.
+
 - **`registerDevice(token, platform)`: notificaciones con la app cerrada.** El
   token lo da `firebase_messaging`, que va en tu app y no en este paquete: así
   una app que no quiera push no carga Firebase.
