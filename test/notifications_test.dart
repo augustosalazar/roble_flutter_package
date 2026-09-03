@@ -295,6 +295,71 @@ void main() {
       expect(await db.notifications.markAllRead(), 3);
     });
 
+    test('enviar a un canal manda channel, no recipients', () async {
+      final db = cliente([
+        (_) => json200([notificacionJson(recipientId: 'channel:curso-101')])
+      ]);
+
+      await db.notifications.send(channel: 'curso-101', title: 'Examen');
+
+      final body = jsonDecode(peticiones.single.body) as Map;
+      expect(body['channel'], 'curso-101');
+      expect(body.containsKey('recipients'), isFalse);
+    });
+
+    test('no deja mandar a un canal y a personas a la vez', () async {
+      final db = cliente([]);
+      // Quien estuviera en las dos listas la recibiria dos veces.
+      expect(
+        () => db.notifications.send(to: 'user-1', channel: 'curso-101', title: 'x'),
+        throwsArgumentError,
+      );
+    });
+
+    test('sin destino tampoco sale', () async {
+      final db = cliente([]);
+      expect(() => db.notifications.send(title: 'x'), throwsArgumentError);
+    });
+
+    test('entrar y salir de un canal escapan el nombre', () async {
+      final db = cliente([
+        (_) => json200({'success': true}),
+        (_) => json200({'success': true}),
+      ]);
+
+      await db.notifications.subscribe('curso 101');
+      expect(peticiones.first.url.path,
+          '/realtime/notifications/proyecto_ab12/channels/curso%20101/subscribe');
+      expect(peticiones.first.method, 'POST');
+
+      await db.notifications.unsubscribe('curso 101');
+      expect(peticiones.last.method, 'DELETE');
+    });
+
+    test('un canal sin declarar se lee con sus valores por defecto', () async {
+      final db = cliente([
+        (_) => json200([
+              {
+                'dbName': 'proyecto_ab12',
+                'name': 'curso-101',
+                'title': null,
+                'subscribeAccess': 'open',
+                'sendAccess': null,
+                'allowedRoleIds': [],
+                'createdAt': null,
+              }
+            ])
+      ]);
+
+      final canales = await db.notifications.channels();
+
+      expect(canales.single.name, 'curso-101');
+      expect(canales.single.subscribeAccess, RobleSubscribeAccess.open);
+      // Sin titulo se muestra el nombre.
+      expect(canales.single.label, 'curso-101');
+      expect(canales.single.createdAt, isNull);
+    });
+
     test('programar manda la fecha en ISO y en UTC', () async {
       final db = cliente([
         (_) => json200({

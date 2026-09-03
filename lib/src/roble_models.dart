@@ -407,3 +407,79 @@ class RobleScheduledNotification {
   String toString() =>
       'RobleScheduledNotification($title, $sendAt, $status)';
 }
+
+/// Quien puede entrar a un canal.
+enum RobleSubscribeAccess {
+  /// Cualquiera se suscribe solo.
+  open,
+
+  /// Solo ciertos roles.
+  roles,
+
+  /// La membresia la pone el servidor. Para una matricula.
+  managed;
+
+  static RobleSubscribeAccess fromWire(String value) {
+    for (final a in RobleSubscribeAccess.values) {
+      if (a.name == value) return a;
+    }
+    throw FormatException('Acceso desconocido: $value');
+  }
+}
+
+/// Un canal del proyecto.
+class RobleChannel {
+  const RobleChannel({
+    required this.dbName,
+    required this.name,
+    required this.title,
+    required this.subscribeAccess,
+    required this.sendAccess,
+    required this.allowedRoleIds,
+    required this.createdAt,
+    this.members,
+  });
+
+  final String dbName;
+  final String name;
+
+  /// Como se llama para las personas. `null` si nadie se lo puso.
+  final String? title;
+
+  final RobleSubscribeAccess subscribeAccess;
+
+  /// Quien puede enviar aqui. `null` hereda del proyecto.
+  final String? sendAccess;
+
+  final List<String> allowedRoleIds;
+
+  /// `null` si el canal existe solo porque alguien lo usa.
+  final DateTime? createdAt;
+
+  /// Cuantas personas hay dentro. Solo en la vista de la consola.
+  final int? members;
+
+  /// Como mostrarlo: el titulo si lo tiene, y si no el nombre.
+  String get label => title ?? name;
+
+  factory RobleChannel.fromJson(Map<dynamic, dynamic> json) {
+    final roles = json['allowedRoleIds'];
+    return RobleChannel(
+      dbName: '${json['dbName']}',
+      name: '${json['name']}',
+      title: json['title'] == null ? null : '${json['title']}',
+      subscribeAccess:
+          RobleSubscribeAccess.fromWire('${json['subscribeAccess'] ?? 'open'}'),
+      sendAccess: json['sendAccess'] == null ? null : '${json['sendAccess']}',
+      allowedRoleIds:
+          roles is List ? roles.map((e) => '$e').toList() : const [],
+      createdAt: json['createdAt'] == null
+          ? null
+          : DateTime.tryParse('${json['createdAt']}')?.toLocal(),
+      members: (json['members'] as num?)?.toInt(),
+    );
+  }
+
+  @override
+  String toString() => 'RobleChannel($name, $subscribeAccess)';
+}

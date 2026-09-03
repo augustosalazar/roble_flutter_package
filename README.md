@@ -399,6 +399,35 @@ Llega a todos. Cada persona la marca leída por su cuenta: que tú la leas no la
 marca para los demás. Una de proyecto no se puede borrar desde la app —la
 notificación es una sola y es de todos—, se marca leída y ya.
 
+### Canales: avisar a un grupo
+
+Cuando el aviso no es para una persona ni para todo el proyecto —los de un curso,
+los que siguen un tema— eso es un canal. Se envía una vez y lo reciben quienes
+estén dentro.
+
+```dart
+await db.notifications.subscribe('curso-101');
+final mios = await db.notifications.channels();
+
+// Enviar: `channel` en vez de `to`.
+await db.notifications.send(channel: 'curso-101', title: 'Examen el viernes');
+
+await db.notifications.unsubscribe('curso-101');
+```
+
+Un canal existe con solo usarlo; no hay que crearlo. Lo que sí se configura
+desde la consola es **quién puede entrar**:
+
+| | |
+|---|---|
+| `open` | Cualquiera se suscribe solo. Para «me interesa el fútbol». |
+| `roles` | Solo ciertos roles. |
+| `managed` | La membresía la pone el servidor. Para una matrícula: quién está en Cálculo II no lo decide el estudiante. |
+
+Dos cosas que conviene saber: **al entrar no recibes lo anterior** —te enteras de
+lo que pasa desde que entras— y **salirte siempre puedes**, también de un canal
+`managed`.
+
 ### Lo que ya estaba ahí
 
 El stream **no** trae lo anterior, solo lo que llegue a partir de ahora. Para
@@ -634,6 +663,9 @@ Un `RobleChange` trae `type` (`insert`, `update`, `delete`), `table`,
 | `notifications.remove()` | nada |
 | `notifications.watch()` | `Stream<RobleNotificationEvent>` |
 | `notifications.unreadCountChanges` | `Stream<int>` |
+| `notifications.subscribe()` | nada |
+| `notifications.unsubscribe()` | nada |
+| `notifications.channels()` | `List<RobleChannel>` — en los que estás |
 | `notifications.schedule()` | el envío programado |
 | `notifications.scheduled()` | `List<RobleScheduledNotification>` — los tuyos |
 | `notifications.cancelScheduled()` | nada |

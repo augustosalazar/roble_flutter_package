@@ -50,22 +50,19 @@ class RobleNotifications {
   /// proyecto. El comodin no se mezcla con ids concretos: el servidor lo
   /// rechaza, porque quien estuviera en las dos listas la recibiria dos veces.
   Future<List<RobleNotification>> send({
-    required Object to,
+    Object? to,
+    String? channel,
     required String title,
     String? body,
     String? topic,
     Map<String, dynamic>? data,
     DateTime? expiresAt,
   }) async {
-    final recipients = to is List
-        ? to.map((e) => e.toString()).toList()
-        : <String>[to.toString()];
-
     final res = await _request(
       'POST',
       '',
       body: {
-        'recipients': recipients,
+        ..._destino(to, channel),
         'title': title,
         if (body != null) 'body': body,
         if (topic != null) 'topic': topic,
@@ -164,7 +161,8 @@ class RobleNotifications {
   /// Quien puede enviar tambien decide quien puede programar: se comprueba al
   /// programar y otra vez al enviar, porque para entonces puede haber cambiado.
   Future<RobleScheduledNotification> schedule({
-    required Object to,
+    Object? to,
+    String? channel,
     required String title,
     required DateTime at,
     String? body,
@@ -172,15 +170,11 @@ class RobleNotifications {
     Map<String, dynamic>? data,
     RobleRepeat repeat = RobleRepeat.none,
   }) async {
-    final recipients = to is List
-        ? to.map((e) => e.toString()).toList()
-        : <String>[to.toString()];
-
     final res = await _request(
       'POST',
       'schedule',
       body: {
-        'recipients': recipients,
+        ..._destino(to, channel),
         'title': title,
         if (body != null) 'body': body,
         if (topic != null) 'topic': topic,
@@ -212,6 +206,51 @@ class RobleNotifications {
   /// Cancela uno pendiente. No lo borra: queda como cancelado.
   Future<void> cancelScheduled(String id) async {
     await _request('DELETE', 'schedule/${Uri.encodeComponent(id)}');
+  }
+
+  /// Entra a un canal.
+  ///
+  /// A partir de ahi recibes lo que se mande ahi, pero **no lo anterior**: te
+  /// enteras de lo que pasa desde que entras.
+  ///
+  /// Un canal `managed` —una matricula, por ejemplo— no admite que te apuntes
+  /// tu: a esos mete el servidor.
+  Future<void> subscribe(String channel) async {
+    await _request('POST', 'channels/${Uri.encodeComponent(channel)}/subscribe');
+  }
+
+  /// Sale de un canal. Salirse siempre se puede, tambien de uno `managed`.
+  Future<void> unsubscribe(String channel) async {
+    await _request(
+        'DELETE', 'channels/${Uri.encodeComponent(channel)}/subscribe');
+  }
+
+  /// Los canales en los que estas.
+  Future<List<RobleChannel>> channels() async {
+    final res = await _request('GET', 'channels');
+    return (res as List?)?.whereType<Map>().map(RobleChannel.fromJson).toList() ??
+        const [];
+  }
+
+  /// El destino, sea una persona, todo el proyecto o un canal.
+  ///
+  /// En un solo sitio porque [send] y [schedule] lo comparten, y porque el
+  /// servidor rechaza mandar los dos a la vez: quien estuviera en las dos
+  /// listas la recibiria dos veces.
+  Map<String, dynamic> _destino(Object? to, String? channel) {
+    if (channel != null) {
+      if (to != null) {
+        throw ArgumentError('Usa `to` o `channel`, no los dos');
+      }
+      return {'channel': channel};
+    }
+    if (to == null) {
+      throw ArgumentError('Hace falta `to` o `channel`');
+    }
+    return {
+      'recipients':
+          to is List ? to.map((e) => e.toString()).toList() : <String>[to.toString()],
+    };
   }
 
   /// Apunta este aparato para recibir push con la app cerrada.
