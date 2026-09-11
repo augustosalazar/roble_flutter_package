@@ -276,6 +276,83 @@ Ojo: público es público. Cualquiera con el id del proyecto puede leerla.
 
 ---
 
+### Quién puede tocar qué
+
+Los permisos de Roble son **por tabla y por acción**. Un rol puede leer
+`Product` y no poder borrarla; darle permiso de borrado en una tabla no se lo da
+en las demás. Cuando no lo tiene, la llamada responde `403`:
+
+```dart
+try {
+  await db.delete('Product', id);
+} on RobleApiForbiddenException {
+  mostrar('Tu cuenta no puede borrar productos');
+}
+```
+
+Los roles que trae un proyecto nuevo:
+
+| Rol | Qué puede |
+|---|---|
+| `admin` | Todo, sobre cualquier fila |
+| `user` | Crear y leer (es el rol de quien se registra) |
+| `editor` | Crear, leer, cambiar y borrar **cualquier** fila |
+| `editor_own` | Lo mismo, pero **sólo sobre sus propias filas** |
+
+`editor_own` es el que suele hacer falta: «que cada quien edite lo suyo» sin que
+promover a alguien le deje vaciar la tabla. El rol de la sesión viene en
+`RobleUser.role`, y están escritos en `RobleRole` para no teclearlos:
+
+```dart
+final user = await db.currentUser();
+if (user.role == RobleRole.editorOwn) mostrarBotonEditar();
+```
+
+### De quién es cada fila
+
+Las tablas creadas desde que existe la propiedad por fila traen una columna
+`_owner` con el usuario que insertó el registro. **La pone el servidor**: lo que
+mandes tú en ella no se respeta ni al crear ni al actualizar, y este paquete la
+quita de los datos que envías, así que leer una fila, cambiarle algo y volver a
+escribirla sigue funcionando.
+
+Para pintar «esto es mío» no hace falta ir al servidor:
+
+```dart
+final filas = await db.read('Product');
+final mias = filas.where(db.isMine).toList();
+
+// El id de la sesión, si lo prefieres a mano
+db.currentUserId;
+```
+
+`isMine` mira `_owner` contra la sesión: es para la pantalla, no una
+comprobación de seguridad — quien decide qué puedes tocar es el servidor.
+
+Una tabla puede **ocultar** `_owner` desde la consola (`expose_owner`), que es
+lo que quieres en una tabla anónima: ahí no viene en las lecturas, filtrar por
+ella da error, y `isMine` responde `false` porque no hay forma de saberlo.
+
+### Cuando la tabla sólo te deja lo tuyo
+
+Con la propiedad activada en una tabla, tocar la fila de otra persona responde
+`404`, el mismo que si no existiera. Es a propósito: si respondiera distinto,
+probar identificadores diría cuáles existen y de quién son.
+
+```dart
+try {
+  await db.delete('Product', id);
+} on RobleApiNotFoundException {
+  mostrar('Ese producto ya no está, o no es tuyo');
+}
+```
+
+Un cambio a tener en cuenta: **borrar dos veces el mismo `_id` ya no responde
+`200`**, responde `404`. Si tu app reintenta borrados, trata ese `404` como
+éxito.
+
+---
+
 ## Guardar datos: árbol JSON
 
 A veces no vale la pena declarar una tabla: un chat, un tablero, una partida.
@@ -298,6 +375,16 @@ await db.json.update('mensajes/$id', {'leido': true});
 // Borrar
 await db.json.remove('mensajes/$id');
 ```
+
+Borra ramas, no colecciones: `json.remove('mensajes')` —un solo trozo— vacía la
+colección entera y **es cosa de administradores**, así que a un usuario normal
+le responde `RobleApiForbiddenException`. Con `json.remove('mensajes/$id')` no
+hace falta ningún rol.
+
+Una colección puede además exigir que la ruta sea tuya: si la consola marca uno
+de sus segmentos como el del dueño (por ejemplo `mensajes/<tuId>/...`), escribir
+o borrar por debajo del segmento de otra persona es un `403`, y suscribirse a lo
+que no puedes leer lanza un error de permisos en el stream en vez de emitir.
 
 Una ruta es `coleccion/hijo/nieto`. El primer trozo es la colección.
 
@@ -554,6 +641,8 @@ try {
 | Excepción | Qué pasó |
 |---|---|
 | `RobleApiHttpException` | El servidor respondió con error. Mira `statusCode` |
+| `RobleApiForbiddenException` | `403`: tu rol no puede hacer eso (subclase de la anterior) |
+| `RobleApiNotFoundException` | `404`: no existe, o no es tuyo (subclase de la anterior) |
 | `RobleApiNetworkException` | No se pudo llegar al servidor |
 | `RobleApiTimeoutException` | Tardó demasiado |
 | `RobleApiAuthException` | Problema de sesión o de login social |
@@ -563,14 +652,23 @@ try {
 Los números que más vas a ver:
 
 - **401** — no hay sesión, o las credenciales están mal.
-- **403** — la tabla no es pública (en `publicRead`).
-- **404** — no existe esa consulta guardada.
+- **403** — tu rol no puede hacer eso sobre esa tabla, la tabla no es pública
+  (en `publicRead`), o intentaste borrar una colección entera del árbol JSON,
+  que es cosa de administradores.
+- **404** — la fila no existe **o no es tuya**, o no existe esa consulta
+  guardada.
+
+Las dos últimas tienen su propia clase, así que no hace falta comparar números:
+`RobleApiForbiddenException` y `RobleApiNotFoundException`. Ambas siguen siendo
+`RobleApiHttpException`, así que el código que ya miraba `statusCode` no
+cambia.
 
 ---
 
 ## Referencia rápida
 
-Todos los métodos son asíncronos salvo `isLoggedIn` e `isSocialCallback`.
+Todos los métodos son asíncronos salvo `isLoggedIn`, `isSocialCallback`,
+`currentUserId` e `isMine`.
 
 ### Sesión
 
@@ -617,7 +715,9 @@ Todos los métodos son asíncronos salvo `isLoggedIn` e `isSocialCallback`.
 | `read()` | `List<Map>` — vacía si no hay nada, nunca `null` |
 | `getById()` | `Map?` — **`null` si no existe** |
 | `update()` | el registro ya cambiado |
-| `delete()` | confirmación del borrado |
+| `delete()` | confirmación del borrado — `404` si ya no estaba o no es tuyo |
+| `isMine()` | `bool` — si la fila lleva tu `_owner` |
+| `currentUserId` | `String?` — el id de la sesión, sin ir al servidor |
 | `publicRead()` | `List<Map>` — sin necesidad de sesión |
 | `executeQuery()` | `RobleQueryResult` — `rows`, `rowCount`, `fields` |
 | `executeQueryByName()` | `RobleQueryResult` |
@@ -631,7 +731,7 @@ Todos los métodos son asíncronos salvo `isLoggedIn` e `isSocialCallback`.
 | `json.write()` | nada |
 | `json.update()` | nada |
 | `json.push()` | `String` — **la clave que generó el servidor** |
-| `json.remove()` | nada |
+| `json.remove()` | nada — con un solo segmento, sólo para `admin` |
 | `json.watch()` | `Stream<RobleChange>` |
 
 ### Tiempo real

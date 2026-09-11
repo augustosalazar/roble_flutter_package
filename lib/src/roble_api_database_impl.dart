@@ -15,6 +15,7 @@ import 'roble_google_signin.dart';
 import 'roble_json_db.dart';
 import 'roble_notifications.dart';
 import 'roble_notifications_client.dart';
+import 'roble_ownership.dart';
 import 'roble_realtime.dart';
 import 'roble_realtime_client.dart';
 import 'roble_social_auth.dart';
@@ -501,7 +502,7 @@ class RobleApiDataBase {
             '(${config.authUrl.split('/').last})';
       }
 
-      throw RobleApiHttpException(response.statusCode, msg);
+      throw robleHttpError(response.statusCode, msg);
     } on RobleApiException {
       // Ya es una excepción del paquete: la propagamos sin envolverla.
       rethrow;
@@ -1512,7 +1513,7 @@ class RobleApiDataBase {
     final res = await _makeRequest(
       'POST',
       'insert-one',
-      body: {'tableName': tableName, 'record': data},
+      body: {'tableName': tableName, 'record': robleWithoutOwner(data)},
     );
 
     if (res is Map) return Map<String, dynamic>.from(res);
@@ -1540,7 +1541,10 @@ class RobleApiDataBase {
     final res = await _makeRequest(
       'POST',
       'insert',
-      body: {'tableName': tableName, 'records': records},
+      body: {
+        'tableName': tableName,
+        'records': records.map(robleWithoutOwner).toList(),
+      },
     );
 
     if (res is! Map) {
@@ -1576,9 +1580,13 @@ class RobleApiDataBase {
 
   Future<Map<String, dynamic>> update(
       String tableName, dynamic id, Map<String, dynamic> data) async {
+    // `_owner` lo asigna el servidor y rechaza el resto. Se quita aqui, igual
+    // que `_id`, para que leer una fila, cambiarle algo y volver a escribirla
+    // no acabe en un 400.
     final updateData = Map<String, dynamic>.from(data)
       ..remove('_id')
-      ..remove('id');
+      ..remove('id')
+      ..remove(robleOwnerColumn);
 
     final res = await _makeRequest(
       'PUT',
@@ -1604,6 +1612,33 @@ class RobleApiDataBase {
       },
     );
     return (res is Map) ? Map<String, dynamic>.from(res) : {};
+  }
+
+  /// Id del usuario de la sesión, sin ir al servidor.
+  ///
+  /// Sale del token que ya está en memoria, así que sirve para pintar: comparar
+  /// el `_owner` de una fila con esto responde «¿es mía?» sin una llamada más.
+  /// No es una comprobación de seguridad —el token no se verifica aquí, y quien
+  /// decide qué puedes tocar es el servidor—, es para la pantalla.
+  ///
+  /// `null` si no hay sesión.
+  String? get currentUserId {
+    final sub = robleJwtPayload(_accessToken)?['sub'];
+    return (sub is String && sub.isNotEmpty) ? sub : null;
+  }
+
+  /// Si la fila es de quien tiene la sesión abierta.
+  ///
+  /// ```dart
+  /// final mias = filas.where(db.isMine).toList();
+  /// ```
+  ///
+  /// `false` también cuando la tabla oculta `_owner`: sin la columna no se
+  /// puede saber, y decir que sí sería peor que decir que no.
+  bool isMine(Map<String, dynamic>? row) {
+    final owner = robleOwnerOf(row);
+    final yo = currentUserId;
+    return owner != null && yo != null && owner == yo;
   }
 
   /// Lee una tabla marcada como pública, sin autenticación.

@@ -1,3 +1,4 @@
+import 'roble_api_exception.dart';
 import 'roble_realtime.dart';
 import 'roble_realtime_client.dart';
 
@@ -85,6 +86,15 @@ class RobleJsonDb {
   }
 
   /// Borra [path] y todo lo que cuelgue de el.
+  ///
+  /// Con un solo segmento —`remove('mensajes')`— se lleva la coleccion entera,
+  /// y eso es cosa de administradores: a un usuario normal le responde
+  /// [RobleApiForbiddenException]. Borra las ramas concretas
+  /// (`remove('mensajes/$id')`) y no hara falta el rol.
+  ///
+  /// Una coleccion puede exigir ademas que la ruta sea tuya: si su politica
+  /// marca un segmento como dueno, escribir o borrar por debajo del de otra
+  /// persona tambien es un `403`.
   Future<void> remove(String path) async {
     await _request('DELETE', _encode(path));
   }

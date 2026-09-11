@@ -90,6 +90,35 @@ class RoblePartialInsertException extends RobleApiException {
             '${result.skipped.map((s) => 'fila ${s.index} (${s.reason})').join('; ')}');
 }
 
+/// El servidor entendió la petición y se negó a hacerla: `403`.
+///
+/// En Roble esto es casi siempre el modelo de permisos, no la sesión. Desde que
+/// los permisos son por tabla, un rol puede leer `pedidos` y no poder borrarla,
+/// así que el mismo token vale para una cosa y no para la otra. También sale al
+/// borrar una colección entera del árbol JSON, que es cosa de administradores,
+/// y al suscribirse a una colección que no se puede leer.
+///
+/// Extiende [RobleApiHttpException] a propósito: quien ya capturaba el `403`
+/// por código sigue capturándolo igual.
+class RobleApiForbiddenException extends RobleApiHttpException {
+  const RobleApiForbiddenException(String message, {Object? code})
+      : super(403, message, code: code);
+}
+
+/// No hay nada ahí que puedas tocar: `404`.
+///
+/// Con la propiedad por fila activada, el servidor responde lo mismo para «no
+/// existe» que para «no es tuya», y es deliberado: si respondiera distinto,
+/// probar identificadores diría cuáles existen y de quién son.
+///
+/// Ojo con el borrado: antes borrar un `_id` que ya no estaba devolvía `200`.
+/// Ahora devuelve `404`, así que un reintento de un borrado que sí funcionó
+/// llega aquí. Si tu app reintenta borrados, trátalo como éxito.
+class RobleApiNotFoundException extends RobleApiHttpException {
+  const RobleApiNotFoundException(String message, {Object? code})
+      : super(404, message, code: code);
+}
+
 /// El proveedor social no pudo vincularse solo con una cuenta que ya existe.
 ///
 /// Roble responde `409` cuando el proveedor no certifica que el correo esté
@@ -105,3 +134,18 @@ class RoblePartialInsertException extends RobleApiException {
 class RobleApiConflictException extends RobleApiHttpException {
   const RobleApiConflictException(String message) : super(409, message);
 }
+
+/// Convierte una respuesta HTTP fallida en la excepción que le toca.
+///
+/// Un solo sitio decide esto para que no acabe cada llamada clasificando el
+/// mismo `403` a su manera.
+RobleApiHttpException robleHttpError(
+  int statusCode,
+  String message, {
+  Object? code,
+}) =>
+    switch (statusCode) {
+      403 => RobleApiForbiddenException(message, code: code),
+      404 => RobleApiNotFoundException(message, code: code),
+      _ => RobleApiHttpException(statusCode, message, code: code),
+    };

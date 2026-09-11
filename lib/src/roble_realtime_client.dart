@@ -341,6 +341,10 @@ class RobleRealtimeClient {
     switch (code) {
       case 'REALTIME_UNAUTHORIZED':
         return RobleApiAuthException(message);
+      // Permisos, no sesion: la coleccion no deja leerla con este rol, o la
+      // rama es de otra persona. Reintentar o volver a entrar no lo arregla.
+      case 'REALTIME_FORBIDDEN':
+        return RobleApiForbiddenException(message, code: code);
       case 'REALTIME_IDLE_TIMEOUT':
       case 'REALTIME_TOO_SLOW':
         return RobleApiTimeoutException(message);

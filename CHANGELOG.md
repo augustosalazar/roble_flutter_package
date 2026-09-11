@@ -1,5 +1,76 @@
 # Changelog
 
+## 1.11.0
+
+### Añadido
+
+- **Roles y permisos por tabla.** Un rol puede leer una tabla y no poder
+  borrarla: los permisos dejaron de ser de todo el proyecto y pasaron a ser por
+  tabla y por acción. Cuando el rol no alcanza, la llamada responde `403` y
+  ahora sale con su propio tipo.
+
+  ```dart
+  try {
+    await db.delete('Product', id);
+  } on RobleApiForbiddenException {
+    mostrar('Tu cuenta no puede borrar');
+  }
+  ```
+
+  Con esto también salen tipados los rechazos de la política de envío de
+  notificaciones (`NOTIFICATIONS_SEND_FORBIDDEN`, `NOTIFICATIONS_CONSOLE_ONLY`),
+  que ya respondían `403` y llegaban como un error HTTP cualquiera.
+
+  `RobleRole` trae los roles que crea un proyecto nuevo —`admin`, `user`,
+  `editor` y `editor_own`—. `editor_own` es el que suele hacer falta: cada quien
+  edita lo suyo, sin que promoverlo le deje vaciar la tabla. El rol de la sesión
+  viene en `RobleUser.role`.
+
+- **`_owner`: de quién es cada fila.** Las tablas nuevas traen una columna con
+  el usuario que insertó el registro. La sella el servidor con el token, así que
+  no se puede falsear.
+
+  ```dart
+  final mias = (await db.read('Product')).where(db.isMine).toList();
+  ```
+
+  `isMine(fila)` y `currentUserId` responden sin ir al servidor: salen del token
+  que ya está en memoria. Es para la pantalla —quien decide qué puedes tocar es
+  el servidor—. También está `robleOwnerOf(fila)` y la constante
+  `robleOwnerColumn`.
+
+  Una tabla puede ocultar la columna desde la consola, que es lo que quiere una
+  tabla anónima: ahí no viene en las lecturas, filtrar por ella da error, e
+  `isMine` responde `false` porque no hay forma de saberlo.
+
+- **`RobleApiNotFoundException` para el `404`.** Con la propiedad activada en
+  una tabla, tocar la fila de otra persona responde lo mismo que si no
+  existiera. Es a propósito: si respondiera distinto, probar identificadores
+  diría cuáles existen y de quién son.
+
+- **`REALTIME_FORBIDDEN` sale como `RobleApiForbiddenException`.** Suscribirse a
+  una colección que el rol no puede leer parecía un problema de sesión, y volver
+  a entrar no lo arreglaba nunca.
+
+  Mismas funciones que el paquete de JS (3.10.0).
+
+### Cambiado
+
+- **`_owner` se quita de lo que envías**, igual que ya pasaba con `_id`: el
+  servidor lo asigna él y rechaza el que mandes. Sin esto, leer una fila,
+  cambiarle un campo y volver a escribirla acababa en un `400`.
+
+### Ojo
+
+- **Borrar dos veces el mismo `_id` ya no responde `200`, responde `404`.**
+  Antes un borrado que no encontraba nada decía que sí; con la propiedad por
+  fila eso significaba que borrar la fila de otra persona reportaba éxito sin
+  borrar nada. Si tu app reintenta borrados, trata ese `404` como éxito.
+
+- **`json.remove('mensajes')` —la colección entera— es cosa de
+  administradores.** A un usuario normal le responde `403`. Borra las ramas
+  concretas (`json.remove('mensajes/$id')`) y no hace falta ningún rol.
+
 ## 1.10.0
 
 ### Añadido
