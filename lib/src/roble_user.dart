@@ -13,6 +13,7 @@ class RobleUser {
     this.id,
     this.role,
     this.extra,
+    this.isAnonymous = false,
     this.createdAt,
     this.updatedAt,
     this.raw = const {},
@@ -37,6 +38,16 @@ class RobleUser {
   /// Campos adicionales enviados al registrarse. `null` si no se usaron.
   final Map<String, dynamic>? extra;
 
+  /// Si esta sesión es de un invitado: alguien que entró sin cuenta.
+  ///
+  /// Un invitado es un usuario de verdad —tiene [userId], y cada fila que
+  /// escribe queda a su nombre—, sólo que sin credenciales. Su [email] es una
+  /// dirección sintética `anon_…@anonymous.invalid`, que no existe y no puede
+  /// recibir correo: **no la muestres en pantalla**. `upgradeAccount` lo
+  /// convierte en una cuenta de verdad conservando el mismo [userId], así que
+  /// todo lo que escribió sigue siendo suyo.
+  final bool isAnonymous;
+
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -58,6 +69,7 @@ class RobleUser {
         // de un nombre de rol, esto revienta aquí y no tres pantallas más allá.
         role: json['role'] as String?,
         extra: json['extra'] as Map<String, dynamic>?,
+        isAnonymous: json['isAnonymous'] == true,
         createdAt: _fecha(json['createdAt']),
         updatedAt: _fecha(json['updatedAt']),
         raw: json,
@@ -76,6 +88,7 @@ class RobleUser {
         'name': name,
         'role': role,
         'extra': extra,
+        'isAnonymous': isAnonymous,
         'createdAt': createdAt?.toIso8601String(),
         'updatedAt': updatedAt?.toIso8601String(),
       };

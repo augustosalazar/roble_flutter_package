@@ -135,6 +135,56 @@ class RobleApiConflictException extends RobleApiHttpException {
   const RobleApiConflictException(String message) : super(409, message);
 }
 
+/// La clave publicable no puede hacer eso, y lo dice **este** paquete.
+///
+/// Una clave `roble_anon_` sólo inserta, y sólo en las tablas que lo declaren.
+/// El servidor ya lo rechaza, pero se rechaza también aquí para que el fallo
+/// llegue en la línea que lo causó y diga qué credencial estás usando, en vez
+/// de un `401` a mitad de una pantalla que parece una sesión caducada.
+///
+/// No extiende [RobleApiHttpException]: no hubo petición. Si esto te llega,
+/// ninguna llamada salió a la red.
+class RobleAnonKeyScopeException extends RobleApiException {
+  /// El método que se intentó llamar, para que el mensaje no sea un adivina.
+  final String attempted;
+
+  RobleAnonKeyScopeException(this.attempted)
+      : super(
+          'Una clave publicable sólo puede insertar: `$attempted` no está '
+              'permitido. Si necesitas leer, actualizar o borrar, el cliente '
+              'tiene que iniciar sesión (`login` o `signInAnonymously`) en vez '
+              'de usar `anonKey`.',
+          code: 'ANON_KEY_SCOPE',
+        );
+}
+
+/// El proyecto no admite invitados, o no como está configurado ahora mismo.
+///
+/// Dos casos, y conviene distinguirlos por [code] porque se arreglan distinto:
+///
+/// - `ANON_AUTH_DISABLED` (403): falta encender el acceso anónimo del proyecto.
+/// - `ANON_REQUIRES_ROW_OWNERSHIP` (409): está encendido, pero ninguna tabla
+///   aplica propiedad por fila. El servidor se niega a dar una sesión de
+///   invitado que escribiría filas que puede tocar cualquiera. Se arregla en la
+///   consola, activando la propiedad en las tablas donde el invitado escriba.
+class RobleAnonymousAuthException extends RobleApiHttpException {
+  const RobleAnonymousAuthException(int statusCode, String message,
+      {Object? code})
+      : super(statusCode, message, code: code);
+}
+
+/// Ya hay una cuenta con ese correo: `409`, `ANON_UPGRADE_EMAIL_TAKEN`.
+///
+/// El invitado **no** se convirtió y no se tocó nada; sigue siendo invitado y
+/// sus filas siguen siendo suyas. Roble no fusiona dos cuentas en una a
+/// escondidas, porque así es como se pierden datos. Lo que toca es ofrecer
+/// iniciar sesión con esa cuenta, sabiendo que lo escrito como invitado se
+/// queda en la sesión de invitado.
+class RobleAnonUpgradeEmailTakenException extends RobleApiHttpException {
+  const RobleAnonUpgradeEmailTakenException(String message)
+      : super(409, message, code: 'ANON_UPGRADE_EMAIL_TAKEN');
+}
+
 /// Convierte una respuesta HTTP fallida en la excepción que le toca.
 ///
 /// Un solo sitio decide esto para que no acabe cada llamada clasificando el
@@ -143,9 +193,21 @@ RobleApiHttpException robleHttpError(
   int statusCode,
   String message, {
   Object? code,
-}) =>
-    switch (statusCode) {
-      403 => RobleApiForbiddenException(message, code: code),
-      404 => RobleApiNotFoundException(message, code: code),
-      _ => RobleApiHttpException(statusCode, message, code: code),
-    };
+}) {
+  // Los del acceso anónimo van por `code` y no por estado: el 403 de
+  // `ANON_AUTH_DISABLED` es un problema de configuración del proyecto, no del
+  // rol de quien llama, y mezclarlo con los 403 de permisos manda a quien
+  // depura a mirar la tabla equivocada.
+  if (code == 'ANON_UPGRADE_EMAIL_TAKEN') {
+    return RobleAnonUpgradeEmailTakenException(message);
+  }
+  if (code == 'ANON_AUTH_DISABLED' || code == 'ANON_REQUIRES_ROW_OWNERSHIP') {
+    return RobleAnonymousAuthException(statusCode, message, code: code);
+  }
+
+  return switch (statusCode) {
+    403 => RobleApiForbiddenException(message, code: code),
+    404 => RobleApiNotFoundException(message, code: code),
+    _ => RobleApiHttpException(statusCode, message, code: code),
+  };
+}

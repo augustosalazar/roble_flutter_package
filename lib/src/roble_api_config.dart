@@ -27,11 +27,28 @@ class RobleApiConfig {
   /// Timeout usado cuando no se especifica ninguno.
   static const Duration defaultTimeout = Duration(seconds: 30);
 
+  /// Clave publicable del proyecto (`roble_anon_…`): el modo sin sesión.
+  ///
+  /// Con esto el cliente **sólo puede insertar**, y sólo en las tablas que el
+  /// proyecto haya marcado. Todo lo demás —leer, actualizar, borrar, el árbol
+  /// JSON, los archivos, el tiempo real, iniciar sesión— falla en el cliente
+  /// con [RobleAnonKeyScopeException], sin salir a la red.
+  ///
+  /// Está pensada para ir dentro de la app: un formulario de contacto, un
+  /// buzón de sugerencias, una encuesta. **Es pública por diseño** — quien
+  /// desensamble el binario la va a ver, y eso no es una filtración. Lo que la
+  /// hace segura es que no puede leer nada.
+  ///
+  /// Las filas que escribe no tienen dueño, así que nadie con alcance `own`
+  /// podrá editarlas ni borrarlas después.
+  final String? anonKey;
+
   const RobleApiConfig._({
     required this.authUrl,
     required this.dataUrl,
     required this.realtimeUrl,
     required this.timeout,
+    this.anonKey,
   });
 
   /// Crea la configuración a partir del host y del identificador del contrato.
@@ -60,6 +77,7 @@ class RobleApiConfig {
     required String contractId,
     String? realtimeBaseUrl,
     Duration timeout = defaultTimeout,
+    String? anonKey,
   }) {
     // Fallar aquí, y no con un 500 críptico en la primera petición.
     if (!baseUrl.startsWith('http')) {
@@ -87,6 +105,29 @@ class RobleApiConfig {
       );
     }
 
+    final key = anonKey?.trim();
+    if (key != null) {
+      // Pegar aquí un token de sesión o un PAT es el error previsible, y el
+      // síntoma sería un 401 en la primera inserción. Se dice al construir.
+      if (key.startsWith('roble_pat_')) {
+        throw ArgumentError.value(
+          anonKey,
+          'anonKey',
+          'Es un token de acceso de proyecto (roble_pat_…): un secreto de '
+              'servidor que no debe ir en una app. La clave publicable empieza '
+              'por roble_anon_ y se emite en la consola del proyecto.',
+        );
+      }
+      if (!RegExp(r'^roble_anon_[0-9a-f]{16}_[A-Za-z0-9_-]{43}$').hasMatch(key)) {
+        throw ArgumentError.value(
+          anonKey,
+          'anonKey',
+          'No tiene la forma de una clave publicable de Roble '
+              '(roble_anon_<id>_<secreto>). Cópiala de la consola del proyecto.',
+        );
+      }
+    }
+
     String trim(String url) =>
         url.endsWith('/') ? url.substring(0, url.length - 1) : url;
 
@@ -98,6 +139,7 @@ class RobleApiConfig {
       dataUrl: '$host/database/$contractId',
       realtimeUrl: '$realtimeHost/realtime/$contractId',
       timeout: timeout,
+      anonKey: key,
     );
   }
 

@@ -1,5 +1,90 @@
 # Changelog
 
+## 1.12.0
+
+### Añadido
+
+- **Sesión de invitado.** Alguien puede escribir antes de tener cuenta, y sin
+  dejar de ser dueño de lo que escribe.
+
+  ```dart
+  if (!db.isLoggedIn) await db.signInAnonymously();
+  await db.create('carrito', {'producto': id});   // suyo, y de nadie más
+  ```
+
+  Un invitado es un usuario de verdad: tiene `userId` y cada fila que inserta
+  queda a su nombre, así que `isMine()` y el alcance `own` funcionan igual que
+  con una cuenta normal. Lo que no tiene es credenciales.
+
+  `db.isAnonymous` responde desde el token, sin ir al servidor, para decidir si
+  la pantalla ofrece «guarda tu cuenta».
+
+  Su `email` es una dirección sintética `anon_…@anonymous.invalid` que no
+  existe y no puede recibir correo: **no la muestres**.
+
+  El proyecto tiene que tenerlo habilitado y aplicar propiedad por fila en
+  alguna tabla. Si no, sale `RobleAnonymousAuthException` y su `code` dice cuál
+  de las dos cosas falta (`ANON_AUTH_DISABLED` o
+  `ANON_REQUIRES_ROW_OWNERSHIP`). Que el servidor se niegue en el segundo caso
+  es a propósito: un invitado sin propiedad por fila escribe filas que puede
+  borrar cualquier otro invitado.
+
+- **Ascender al invitado a una cuenta**, conservando lo suyo.
+
+  ```dart
+  await db.upgradeAccount(email: email, password: password);
+  ```
+
+  **No crea un usuario nuevo: muta el que ya hay.** El `userId` no cambia, así
+  que cada fila que escribió sigue siendo suya sin mover un dato. Si el correo
+  ya tiene cuenta, sale `RobleAnonUpgradeEmailTakenException` y no se toca
+  nada: Roble no fusiona dos cuentas a escondidas, porque así es como se
+  pierden datos.
+
+  `linkIdentity(provider: 'google')` hace lo mismo con un proveedor: devuelve
+  la `url` a la que mandar a la persona, y al volver la identidad queda unida a
+  esta cuenta en vez de crear otra.
+
+- **Clave publicable: escribir sin sesión ninguna.**
+
+  ```dart
+  final buzon = RobleApiDataBase(
+    config: RobleApiConfig.fromContract(
+      baseUrl: baseUrl,
+      contractId: contractId,
+      anonKey: 'roble_anon_…',
+    ),
+  );
+  await buzon.create('sugerencias', {'texto': texto});
+  ```
+
+  Para un formulario de contacto, un buzón, una encuesta: gente que no se va a
+  registrar. La clave va **dentro de la app** y es pública por diseño — quien
+  desensamble el binario la va a ver, y eso no es una filtración. Lo que la
+  hace segura es que no puede leer nada.
+
+  Un cliente en este modo **sólo inserta**, y sólo en las tablas que el
+  proyecto marque. Todo lo demás falla en el cliente con
+  `RobleAnonKeyScopeException`, sin salir a la red, para que el error aparezca
+  en la línea que lo causó en vez de llegar como un `401` que parece una sesión
+  caducada. `db.isAnonKeyMode` lo dice, para no ofrecer en pantalla lo que no
+  se va a poder hacer.
+
+  Las filas que escribe **no tienen dueño**. Nadie con alcance `own` podrá
+  editarlas ni borrarlas después, así que no sirve para datos que la persona
+  tenga que poder volver a tocar: para eso está la sesión de invitado.
+
+  Pasar un `roble_pat_` como `anonKey` falla al construir la configuración: ese
+  es un secreto de servidor y no va en una app.
+
+- `RobleUser.isAnonymous`.
+
+### Corregido
+
+- Los errores del servidor que traen `code` en el cuerpo ahora lo conservan.
+  Antes se perdía, y dos `409` que se arreglan en sitios distintos llegaban
+  indistinguibles.
+
 ## 1.11.0
 
 ### Añadido

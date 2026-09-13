@@ -375,12 +375,48 @@ class RobleApiDataBase {
   Map<String, String> _buildHeaders({bool skipAuth = false}) {
     final headers = <String, String>{'Content-Type': 'application/json'};
 
-    // ✅ Si hay token, lo agrega automáticamente como header
-    if (!skipAuth && _accessToken != null && _accessToken!.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $_accessToken';
+    // En modo clave publicable no hay sesión que anexar: la credencial es
+    // siempre la misma y no caduca ni se refresca.
+    final credencial = config.anonKey ?? _accessToken;
+    if (!skipAuth && credencial != null && credencial.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $credencial';
     }
 
     return headers;
+  }
+
+  /// `true` si este cliente se construyó con `anonKey`.
+  ///
+  /// Sirve para pintar: una pantalla que sabe que está en modo publicable no
+  /// ofrece el botón de «mis envíos», porque no hay forma de leerlos.
+  bool get isAnonKeyMode => config.anonKey != null;
+
+  /// Corta aquí lo que la clave publicable no puede hacer.
+  ///
+  /// El servidor lo rechaza igual, pero un `401` a mitad de una pantalla se lee
+  /// como una sesión caducada y manda a quien programa a mirar el token. Esto
+  /// falla en la línea que lo causó y nombra el método.
+  void _assertPuedeUsarlo(String metodo) {
+    if (config.anonKey != null) {
+      throw RobleAnonKeyScopeException(metodo);
+    }
+  }
+
+  /// Lo único que la clave publicable tiene permitido: insertar en tablas SQL.
+  ///
+  /// Es una lista blanca, no negra. Una ruta nueva nace prohibida para esta
+  /// credencial mientras nadie piense en ella; al revés estaría abierta hasta
+  /// que alguien se acuerde, y esto es una credencial pública.
+  void _assertAnonKeyPuede(String method, String endpoint, bool isAuthRequest) {
+    if (config.anonKey == null) return;
+
+    final esInsercion = !isAuthRequest &&
+        method.toUpperCase() == 'POST' &&
+        (endpoint == 'insert' || endpoint == 'insert-one');
+
+    if (esInsercion) return;
+
+    throw RobleAnonKeyScopeException('$method $endpoint');
   }
 
   /// Ejecuta una solicitud HTTP genérica.
@@ -396,6 +432,11 @@ class RobleApiDataBase {
     bool skipAuth = false,
     String? baseUrlOverride,
   }) async {
+    // Único punto por el que sale todo, así que es el único sitio donde hay
+    // que acordarse del límite de la clave publicable. Gatear método por
+    // método habría dejado fuera el siguiente que alguien añada.
+    _assertAnonKeyPuede(method, endpoint, isAuthRequest || baseUrlOverride != null);
+
     final baseUrl =
         baseUrlOverride ?? (isAuthRequest ? config.authUrl : config.dataUrl);
     final uri = _buildUri(baseUrl, endpoint, queryParams);
@@ -481,6 +522,12 @@ class RobleApiDataBase {
       }
 
       String msg;
+      // Nest permite lanzar un objeto en vez de una cadena, y el acceso
+      // anónimo lo usa para distinguir causas que comparten estado HTTP: dos
+      // `409` distintos (`ANON_REQUIRES_ROW_OWNERSHIP` y
+      // `ANON_UPGRADE_EMAIL_TAKEN`) se arreglan en sitios distintos. Sin leer
+      // esto, los dos llegaban como la misma excepción.
+      Object? codigo;
       if (response.body.isEmpty) {
         msg = 'El servidor respondió sin cuerpo';
       } else {
@@ -490,6 +537,8 @@ class RobleApiDataBase {
               ? (decoded['message'] ?? decoded['error'])
               : null;
           msg = detail != null ? '$detail' : response.body;
+          final raw = (decoded is Map) ? decoded['code'] : null;
+          codigo = (raw is String && raw.isNotEmpty) ? raw : null;
         } catch (_) {
           msg = response.body;
         }
@@ -502,7 +551,7 @@ class RobleApiDataBase {
             '(${config.authUrl.split('/').last})';
       }
 
-      throw robleHttpError(response.statusCode, msg);
+      throw robleHttpError(response.statusCode, msg, code: codigo);
     } on RobleApiException {
       // Ya es una excepción del paquete: la propagamos sin envolverla.
       rethrow;
@@ -686,6 +735,10 @@ class RobleApiDataBase {
 
   /// Cierra la sesión en el servidor y descarta los tokens locales.
   Future<void> logout() async {
+    // Antes que el aviso de «no hay token»: en modo clave publicable nunca lo
+    // hay, y ese mensaje mandaría a buscar una sesión que no debería existir.
+    _assertPuedeUsarlo('logout');
+
     if (_accessToken == null || _accessToken!.isEmpty) {
       throw const RobleApiAuthException(
           'No hay token activo para cerrar sesión.');
@@ -1612,6 +1665,148 @@ class RobleApiDataBase {
       },
     );
     return (res is Map) ? Map<String, dynamic>.from(res) : {};
+  }
+
+  /// Abre una sesión de invitado: sin correo, sin contraseña, sin formulario.
+  ///
+  /// El invitado es un usuario de verdad con su propio id, así que cada fila
+  /// que escriba queda a su nombre y nadie más puede tocarla. Es la diferencia
+  /// con la clave publicable, que escribe filas sin dueño.
+  ///
+  /// ```dart
+  /// if (!db.isLoggedIn) await db.signInAnonymously();
+  /// await db.insert('carrito', {'producto': id});   // suyo, y de nadie más
+  /// // …más tarde, cuando quiera conservarlo:
+  /// await db.upgradeAccount(email: email, password: password);
+  /// ```
+  ///
+  /// El proyecto tiene que tenerlo habilitado **y** aplicar propiedad por fila
+  /// en alguna tabla; si no, esto falla con [RobleAnonymousAuthException] y su
+  /// `code` dice cuál de las dos cosas falta. Que el servidor se niegue en el
+  /// segundo caso es deliberado: un invitado sin propiedad por fila escribe
+  /// filas que puede borrar cualquier otro invitado.
+  ///
+  /// El servidor limita esto a 3 por hora y por IP, porque cada llamada deja
+  /// una fila permanente. Llámalo una vez y guarda la sesión, no en cada
+  /// arranque.
+  Future<Map<String, dynamic>> signInAnonymously({
+    bool persistSession = true,
+  }) async {
+    final res = await _makeRequest(
+      'POST',
+      'signin-anonymous',
+      isAuthRequest: true,
+      skipAuth: true,
+    );
+
+    _persistTokens = persistSession;
+    if (!persistSession) await _forgetStoredSession();
+
+    if (res is Map) {
+      _refreshToken = res['refreshToken'] as String?;
+      _updateAccessToken(res['accessToken'] as String?);
+    }
+
+    final perfil = await currentUser();
+    _emitAuthState(RobleAuthReason.signedIn, RobleUser.fromJson(perfil));
+    return perfil;
+  }
+
+  /// Si quien tiene la sesión abierta es un invitado, sin ir al servidor.
+  ///
+  /// Sale del token que ya está en memoria, igual que [currentUserId]. Es para
+  /// la pantalla: enseñar «guarda tu cuenta» a un invitado y no a quien ya se
+  /// registró. `false` también cuando no hay sesión.
+  bool get isAnonymous => robleJwtPayload(_accessToken)?['isAnonymous'] == true;
+
+  /// Convierte al invitado de esta sesión en una cuenta con correo y clave.
+  ///
+  /// **No crea un usuario nuevo: muta el que ya hay.** El `userId` no cambia,
+  /// así que cada fila que el invitado escribió sigue siendo suya sin mover un
+  /// dato. Ese es el propósito entero del diseño.
+  ///
+  /// ```dart
+  /// try {
+  ///   await db.upgradeAccount(email: email, password: password);
+  /// } on RobleAnonUpgradeEmailTakenException {
+  ///   // ya existe esa cuenta; ofrecer iniciar sesión, avisando de que
+  ///   // lo escrito como invitado se queda en la sesión de invitado
+  /// }
+  /// ```
+  ///
+  /// Con [verify] el servidor manda un código al correo y la cuenta queda
+  /// pendiente hasta confirmarlo con `verifyEmail`; por omisión no se verifica,
+  /// que es lo que hace `signupDirect`.
+  ///
+  /// Si el correo ya tiene cuenta, falla con
+  /// [RobleAnonUpgradeEmailTakenException] y **no cambia nada**: el invitado
+  /// sigue siéndolo. Roble no fusiona dos cuentas a escondidas.
+  Future<Map<String, dynamic>> upgradeAccount({
+    required String email,
+    required String password,
+    String? name,
+    bool verify = false,
+  }) async {
+    final res = await _makeRequest(
+      'POST',
+      verify ? 'me/upgrade' : 'me/upgrade-direct',
+      isAuthRequest: true,
+      body: {
+        'email': email,
+        'password': password,
+        if (name != null) 'name': name,
+      },
+    );
+
+    // El servidor mueve al usuario al rol por defecto y le quita la marca de
+    // invitado. El token en memoria todavía dice lo de antes, así que se
+    // refresca: si no, `isAnonymous` seguiría diciendo `true` hasta el próximo
+    // refresco y la pantalla seguiría ofreciendo «guarda tu cuenta».
+    if (_refreshToken != null) {
+      try {
+        await _refreshAccessToken();
+      } catch (_) {
+        // El ascenso ya ocurrió en el servidor; que el refresco falle no lo
+        // deshace. Se seguirá con el token viejo hasta que caduque.
+      }
+    }
+
+    return (res is Map) ? Map<String, dynamic>.from(res) : {};
+  }
+
+  /// Empieza a enlazar esta cuenta con un proveedor (Google, Microsoft).
+  ///
+  /// Devuelve la `url` a la que hay que mandar a la persona. Al volver, la
+  /// identidad queda unida a **esta misma cuenta** en vez de crear otra, así
+  /// que sirve para que un invitado conserve lo suyo entrando con Google.
+  ///
+  /// Si esa cuenta del proveedor ya pertenece a otro usuario de Roble, el
+  /// enlace falla en el retorno: dos grafos de identidad no se fusionan solos.
+  Future<Map<String, String>> linkIdentity({
+    required String provider,
+    String? redirect,
+    String? scopes,
+    bool offlineAccess = false,
+  }) async {
+    final res = await _makeRequest(
+      'POST',
+      'me/identities/${Uri.encodeComponent(provider)}/link',
+      isAuthRequest: true,
+      body: {
+        if (redirect != null) 'redirect': redirect,
+        if (scopes != null) 'scopes': scopes,
+        if (offlineAccess) 'offlineAccess': true,
+      },
+    );
+
+    final url = (res is Map) ? res['url'] : null;
+    if (url is! String || url.isEmpty) {
+      throw const RobleApiFormatException(
+        'El servidor no devolvió la URL para enlazar la identidad',
+      );
+    }
+
+    return {'url': url, 'state': '${(res as Map)['state'] ?? ''}'};
   }
 
   /// Id del usuario de la sesión, sin ir al servidor.

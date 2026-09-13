@@ -143,6 +143,90 @@ await db.resetPassword(token: '123456', newPassword: 'OtraClave!2');
 
 ---
 
+## Entrar sin cuenta
+
+Dos formas, y la diferencia importa: una deja dueño, la otra no.
+
+### Invitado: escribe ahora, se registra después
+
+```dart
+if (!db.isLoggedIn) await db.signInAnonymously();
+await db.create('carrito', {'producto': id});   // suyo, y de nadie más
+```
+
+Un invitado es un usuario de verdad. Tiene `userId`, cada fila que inserta
+queda a su nombre, y `isMine()` y el alcance `own` funcionan igual que con una
+cuenta normal. Lo único que no tiene es correo y contraseña.
+
+`db.isAnonymous` responde desde el token, sin ir al servidor, que es lo que
+necesitas para decidir si la pantalla enseña «guarda tu cuenta».
+
+Su `email` es una dirección inventada `anon_…@anonymous.invalid`. No existe y
+no puede recibir correo: no la muestres en pantalla.
+
+Cuando quiera conservarlo:
+
+```dart
+try {
+  await db.upgradeAccount(email: email, password: password);
+} on RobleAnonUpgradeEmailTakenException {
+  // ya hay cuenta con ese correo: ofrécele iniciar sesión, avisando
+  // de que lo escrito como invitado se queda en la sesión de invitado
+}
+```
+
+Esto **no crea un usuario nuevo: muta el que ya hay**. El `userId` no cambia,
+así que todo lo que escribió sigue siendo suyo sin mover un solo dato. Ese es
+el punto entero.
+
+Con Google o Microsoft es lo mismo, con `linkIdentity(provider: 'google')`:
+devuelve la `url` a la que mandar a la persona, y al volver la identidad queda
+unida a esta cuenta en vez de crear otra.
+
+El proyecto tiene que tener habilitado el acceso anónimo **y** aplicar
+propiedad por fila en alguna tabla. Si falta algo sale
+`RobleAnonymousAuthException` y su `code` dice cuál de las dos cosas. La
+segunda condición no es un capricho: un invitado sin propiedad por fila escribe
+filas que puede borrar cualquier otro invitado.
+
+### Clave publicable: un buzón, sin sesión ninguna
+
+Para un formulario de contacto, una encuesta, un buzón de sugerencias: gente
+que no se va a registrar y que no necesita volver a ver lo que mandó.
+
+```dart
+final buzon = RobleApiDataBase(
+  config: RobleApiConfig.fromContract(
+    baseUrl: baseUrl,
+    contractId: contractId,
+    anonKey: 'roble_anon_…',        // se emite en la consola del proyecto
+  ),
+);
+
+await buzon.create('sugerencias', {'texto': texto});
+```
+
+La clave va dentro de la app y **es pública por diseño**: quien desensamble el
+binario la va a ver, y eso no es una filtración. Lo que la hace segura es que
+no puede leer nada.
+
+Un cliente así **sólo inserta**, y sólo en las tablas que el proyecto haya
+marcado. Cualquier otra cosa falla en tu código, sin salir a la red:
+
+```dart
+await buzon.read('sugerencias');
+// RobleAnonKeyScopeException: una clave publicable sólo puede insertar
+```
+
+`buzon.isAnonKeyMode` es `true`, para no ofrecer en pantalla un botón que
+siempre va a fallar.
+
+**Las filas que escribe no tienen dueño.** Nadie con alcance `own` va a poder
+editarlas ni borrarlas después. Si la persona tiene que poder volver a tocar lo
+suyo, lo que quieres es la sesión de invitado de arriba, no esto.
+
+---
+
 ## Entrar con Google
 
 Una línea:
