@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.12.1
+
+### Corregido
+
+- `logout()` ahora finaliza la sesión local incluso si el servidor responde
+  `401` porque el token ya caducó. Cerrar sesión vuelve a ser seguro e
+  idempotente después de dejar la app abierta mucho tiempo.
+
 ## 1.12.0
 
 ### Añadido

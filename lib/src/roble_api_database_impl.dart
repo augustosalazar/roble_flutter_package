@@ -106,9 +106,8 @@ class RobleApiDataBase {
   /// ```dart
   /// db.onSessionExpired.listen((_) => irALogin());
   /// ```
-  Stream<void> get onSessionExpired => _authStates.stream
-      .where((estado) => estado.hasExpired)
-      .map((_) {});
+  Stream<void> get onSessionExpired =>
+      _authStates.stream.where((estado) => estado.hasExpired).map((_) {});
 
   final _authStates = StreamController<RobleAuthState>.broadcast();
 
@@ -209,7 +208,7 @@ class RobleApiDataBase {
         valor,
         nombre,
         'No puede estar vacío. Es el nombre de un destino de retorno '
-            'configurado en la consola de Roble; omítelo para usar "default"',
+        'configurado en la consola de Roble; omítelo para usar "default"',
       );
     }
     return limpio;
@@ -435,7 +434,8 @@ class RobleApiDataBase {
     // Único punto por el que sale todo, así que es el único sitio donde hay
     // que acordarse del límite de la clave publicable. Gatear método por
     // método habría dejado fuera el siguiente que alguien añada.
-    _assertAnonKeyPuede(method, endpoint, isAuthRequest || baseUrlOverride != null);
+    _assertAnonKeyPuede(
+        method, endpoint, isAuthRequest || baseUrlOverride != null);
 
     final baseUrl =
         baseUrlOverride ?? (isAuthRequest ? config.authUrl : config.dataUrl);
@@ -734,6 +734,9 @@ class RobleApiDataBase {
   }
 
   /// Cierra la sesión en el servidor y descarta los tokens locales.
+  ///
+  /// Es idempotente frente a un `401`: si el token ya caducó, el servidor no
+  /// tiene una sesión que cerrar, pero esta app sí debe olvidar la copia local.
   Future<void> logout() async {
     // Antes que el aviso de «no hay token»: en modo clave publicable nunca lo
     // hay, y ese mensaje mandaría a buscar una sesión que no debería existir.
@@ -744,7 +747,13 @@ class RobleApiDataBase {
           'No hay token activo para cerrar sesión.');
     }
 
-    await _makeRequest('POST', 'logout', isAuthRequest: true);
+    try {
+      await _makeRequest('POST', 'logout', isAuthRequest: true);
+    } on RobleApiHttpException catch (e) {
+      // `logout` no refresca tokens a propósito: renovar una sesión solo para
+      // cerrarla es trabajo y tráfico inútiles. Un 401 equivale a «ya salió».
+      if (e.statusCode != 401) rethrow;
+    }
     _clearTokens();
     _emitAuthState(RobleAuthReason.signedOut);
   }

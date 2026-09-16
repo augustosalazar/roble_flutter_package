@@ -154,8 +154,8 @@ void main() {
     });
 
     test('sin verificar hay sesión pero todavía no hay perfil', () async {
-      final db = clienteCon(Guion([(_) => json200({})]),
-          almacen: sesionGuardada());
+      final db =
+          clienteCon(Guion([(_) => json200({})]), almacen: sesionGuardada());
 
       final estados = <RobleAuthState>[];
       db.authStateChanges.listen(estados.add);
@@ -202,6 +202,24 @@ void main() {
       expect(estados.last.reason, RobleAuthReason.signedOut);
       expect(estados.last.user, isNull);
       expect(estados.last.isSignedIn, isFalse);
+    });
+
+    test('un token vencido también cierra la copia local', () async {
+      final guion = Guion(entrar());
+      final db = clienteCon(guion);
+      await db.login(email: 'ana@correo.com', password: 'secreto');
+
+      final estados = <RobleAuthState>[];
+      db.authStateChanges.listen(estados.add);
+
+      // Si se quedó abierta mucho tiempo, ya no hay sesión en el servidor.
+      guion.reescribir([(_) => jsonErr(401, 'Unauthorized')]);
+      await db.logout();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(db.isLoggedIn, isFalse);
+      expect(estados.last.reason, RobleAuthReason.signedOut);
+      expect(estados.last.user, isNull);
     });
 
     test('salir de donde no se estaba no emite nada', () async {
